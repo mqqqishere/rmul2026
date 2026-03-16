@@ -1,11 +1,21 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import { sql } from '@vercel/postgres';
-import path from 'path';
 import { GoogleGenAI } from '@google/genai';
 
 const app = express();
 app.use(express.json());
+
+// 数据库懒初始化，避免冷启动竞争条件
+let dbReady: Promise<void> | null = null;
+function ensureDbReady() {
+  if (!dbReady) {
+    dbReady = initDb();
+  }
+  return dbReady;
+}
+app.use((req, res, next) => {
+  ensureDbReady().then(() => next()).catch(next);
+});
 
 // 初始化数据库表（异步 Postgres 语法）
 async function initDb() {
@@ -121,7 +131,7 @@ async function generateAIContent(prompt: string) {
       // Fallback to Gemini SDK
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
       const response = await ai.models.generateContent({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-2.0-flash",
         contents: prompt,
       });
       return response.text;
@@ -404,21 +414,12 @@ app.delete('/api/tournaments/:id/teams/:teamId', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// ... 前面的 import 和 initDb 保持不变 ...
 
 async function startServer() {
-  // 在 Vercel 环境下，我们只做数据库初始化
-  // Vercel 会自动处理静态资源，不需要我们手动 app.use(express.static('dist'))
-  try {
-    await initDb();
-    console.log('Database sync complete');
-  } catch (err) {
-    console.error('Database sync failed:', err);
-  }
-
   // 只有在本地开发（非 Vercel）时才启动 Vite 或监听端口
   if (!process.env.VERCEL) {
     if (process.env.NODE_ENV !== 'production') {
+      const { createServer: createViteServer } = await import('vite');
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: 'custom'
@@ -434,7 +435,7 @@ async function startServer() {
 }
 
 // 执行启动逻辑
-startServer();
+await startServer();
 
 // 必须导出 app，Vercel 才能调用它作为 Serverless Function
 export default app;
