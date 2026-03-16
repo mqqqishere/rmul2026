@@ -1,0 +1,583 @@
+import { useState, useEffect, FormEvent } from 'react';
+import { Tournament, Team, TournamentStage } from '../types';
+import DatePicker from 'react-datepicker';
+import "react-datepicker/dist/react-datepicker.css";
+import { zhCN } from 'date-fns/locale';
+
+export default function Admin() {
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  
+  // Forms state
+  const [newTournament, setNewTournament] = useState({ name: '', game: '', start_date: new Date(), end_date: new Date(), prize_pool: '', status: 'Upcoming', description: '', format: 'Swiss' });
+  const [newTeam, setNewTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '' });
+  
+  // Add team to tournament state
+  const [selectedTournamentId, setSelectedTournamentId] = useState('');
+  const [selectedTeamId, setSelectedTeamId] = useState('');
+
+  // Edit team state
+  const [editingTeamId, setEditingTeamId] = useState('');
+  const [editTeam, setEditTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+
+  const handleEditTeamSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const teamId = e.target.value;
+    setEditingTeamId(teamId);
+    if (teamId) {
+      const team = teams.find(t => t.id.toString() === teamId);
+      if (team) {
+        setEditTeam({
+          name: team.name || '',
+          logo_url: team.logo_url || '',
+          region: team.region || '',
+          description: team.description || '',
+          reference_links: team.reference_links || '',
+          historical_records: team.historical_records || ''
+        });
+      }
+    } else {
+      setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+    }
+  };
+
+  const handleUpdateTeam = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editingTeamId) return;
+    await fetch(`/api/teams/${editingTeamId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(editTeam)
+    });
+    alert('队伍已更新！');
+    setEditingTeamId('');
+    setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+    fetchData();
+  };
+
+  // Add stage state
+  const [newStage, setNewStage] = useState({ tournament_id: '', name: '', format: 'Swiss' });
+
+  // Settings state
+  const [apiKey, setApiKey] = useState('');
+  const [apiUrl, setApiUrl] = useState('');
+  const [aiModel, setAiModel] = useState('');
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+
+  // Add match state
+  const [newMatch, setNewMatch] = useState({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+  const [matchDetails, setMatchDetails] = useState('');
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+
+  const fetchData = () => {
+    fetch('/api/tournaments').then(res => res.json()).then(setTournaments);
+    fetch('/api/teams').then(res => res.json()).then(setTeams);
+    fetch('/api/settings/ai').then(res => res.json()).then(data => {
+      setApiKey(data.apiKey || '');
+      setApiUrl(data.apiUrl || '');
+      setAiModel(data.aiModel || '');
+    });
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleCreateTournament = async (e: FormEvent) => {
+    e.preventDefault();
+    await fetch('/api/tournaments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...newTournament,
+        start_date: newTournament.start_date.toISOString().split('T')[0],
+        end_date: newTournament.end_date.toISOString().split('T')[0]
+      })
+    });
+    setNewTournament({ name: '', game: '', start_date: new Date(), end_date: new Date(), prize_pool: '', status: 'Upcoming', description: '', format: 'Swiss' });
+    fetchData();
+  };
+
+  const handleCreateTeam = async (e: FormEvent) => {
+    e.preventDefault();
+    await fetch('/api/teams', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newTeam)
+    });
+    setNewTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '' });
+    fetchData();
+  };
+
+  const handleAddTeamToTournament = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedTournamentId || !selectedTeamId) return;
+    
+    await fetch(`/api/tournaments/${selectedTournamentId}/teams`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ team_id: selectedTeamId })
+    });
+    alert('队伍已添加到赛事！');
+  };
+
+  const handleAddStage = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newStage.tournament_id) return;
+    
+    await fetch(`/api/tournaments/${newStage.tournament_id}/stages`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newStage.name, format: newStage.format })
+    });
+    alert('赛事阶段已添加！');
+    setNewStage({ tournament_id: '', name: '', format: 'Swiss' });
+    fetchData();
+  };
+
+  const handleAddMatch = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!newMatch.tournament_id || !newMatch.team1_id || !newMatch.team2_id) return;
+    
+    let report = '';
+    if (matchDetails) {
+      setIsGeneratingReport(true);
+      try {
+        const res = await fetch('/api/ai/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawDetails: matchDetails })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          report = data.summary;
+        } else {
+          const errorData = await res.json();
+          alert(`AI 总结生成失败: ${errorData.error || '未知错误'}`);
+        }
+      } catch (error) {
+        console.error("AI Error:", error);
+        alert('AI 总结生成失败。');
+      } finally {
+        setIsGeneratingReport(false);
+      }
+    }
+
+    await fetch('/api/matches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...newMatch,
+        match_date: newMatch.match_date.toISOString(),
+        report: report,
+        raw_report: matchDetails
+      })
+    });
+    alert('比赛已添加！');
+    setNewMatch({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+    setMatchDetails('');
+  };
+
+  const selectedTournament = tournaments.find(t => t.id.toString() === newMatch.tournament_id);
+
+  const handleSaveApiKey = async (e: FormEvent) => {
+    e.preventDefault();
+    setIsSavingApiKey(true);
+    try {
+      const res = await fetch('/api/settings/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey, apiUrl, aiModel })
+      });
+      if (res.ok) {
+        alert('AI 设置已保存！');
+      } else {
+        alert('保存失败');
+      }
+    } catch (error) {
+      console.error(error);
+      alert('保存失败');
+    } finally {
+      setIsSavingApiKey(false);
+    }
+  };
+
+  const getSuggestedModels = () => {
+    const url = apiUrl.toLowerCase();
+    if (url.includes('deepseek')) return ['deepseek-chat', 'deepseek-reasoner'];
+    if (url.includes('aliyuncs') || url.includes('qwen')) return ['qwen-max', 'qwen-plus', 'qwen-turbo'];
+    if (url.includes('volces') || url.includes('doubao')) return ['ep-20240101-xxx'];
+    if (url.includes('anthropic') || url.includes('claude')) return ['claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
+    if (url.includes('openai') || url.includes('gpt')) return ['gpt-4o', 'gpt-4-turbo', 'gpt-3.5-turbo'];
+    if (url.includes('google') || url.includes('gemini')) return ['gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-2.5-flash'];
+    return ['gpt-4o', 'deepseek-chat', 'qwen-max', 'claude-3-5-sonnet-20241022', 'gemini-1.5-pro'];
+  };
+
+  return (
+    <div className="space-y-12">
+      <div>
+        <h1 className="text-3xl font-bold text-white tracking-tight">后台管理</h1>
+        <p className="text-slate-400 mt-2">管理赛事、队伍和比赛。</p>
+      </div>
+
+      {/* AI Settings */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <h2 className="text-xl font-bold text-white mb-4">AI 设置 (OpenAI 兼容格式)</h2>
+        <form onSubmit={handleSaveApiKey} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">API Base URL</label>
+              <input 
+                type="text" 
+                value={apiUrl} 
+                onChange={e => setApiUrl(e.target.value)} 
+                placeholder="例如: https://api.deepseek.com/v1" 
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" 
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">API Key</label>
+              <input 
+                type="password" 
+                value={apiKey} 
+                onChange={e => setApiKey(e.target.value)} 
+                placeholder="sk-..." 
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" 
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1">模型名称 (Model)</label>
+            <input 
+              type="text" 
+              list="model-suggestions"
+              value={aiModel} 
+              onChange={e => setAiModel(e.target.value)} 
+              placeholder="例如: deepseek-chat" 
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" 
+            />
+            <datalist id="model-suggestions">
+              {getSuggestedModels().map(model => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
+            <p className="text-xs text-slate-500 mt-2">支持 DeepSeek, Qwen, Doubao, Claude, GPT, Gemini 等任何兼容 OpenAI 格式的接口。如果不填，将使用系统默认配置。</p>
+          </div>
+          <button 
+            type="submit" 
+            disabled={isSavingApiKey} 
+            className="bg-emerald-600 hover:bg-emerald-500 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
+          >
+            {isSavingApiKey ? '保存中...' : '保存 AI 设置'}
+          </button>
+        </form>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+        {/* Create Tournament */}
+        <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+          <h2 className="text-xl font-bold text-white mb-4">创建赛事</h2>
+          <form onSubmit={handleCreateTournament} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">名称</label>
+              <input required type="text" value={newTournament.name} onChange={e => setNewTournament({...newTournament, name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">游戏</label>
+                <input required type="text" value={newTournament.game} onChange={e => setNewTournament({...newTournament, game: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">赛制 (默认)</label>
+                <select value={newTournament.format} onChange={e => setNewTournament({...newTournament, format: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="Swiss">瑞士轮 (Swiss)</option>
+                  <option value="Round Robin">循环赛 (Round Robin)</option>
+                  <option value="Single Elimination">单败淘汰 (Single Elimination)</option>
+                  <option value="Double Elimination">双败淘汰 (Double Elimination)</option>
+                </select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">开始日期</label>
+                <DatePicker 
+                  selected={newTournament.start_date} 
+                  onChange={(date: Date | null) => date && setNewTournament({...newTournament, start_date: date})} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+                  dateFormat="yyyy-MM-dd"
+                  locale={zhCN}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">结束日期</label>
+                <DatePicker 
+                  selected={newTournament.end_date} 
+                  onChange={(date: Date | null) => date && setNewTournament({...newTournament, end_date: date})} 
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+                  dateFormat="yyyy-MM-dd"
+                  locale={zhCN}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">总奖金</label>
+                <input type="text" value={newTournament.prize_pool} onChange={e => setNewTournament({...newTournament, prize_pool: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">状态</label>
+                <select value={newTournament.status} onChange={e => setNewTournament({...newTournament, status: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="Upcoming">即将开始</option>
+                  <option value="Ongoing">进行中</option>
+                  <option value="Completed">已结束</option>
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">描述</label>
+              <textarea value={newTournament.description} onChange={e => setNewTournament({...newTournament, description: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3}></textarea>
+            </div>
+            <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+              创建赛事
+            </button>
+          </form>
+        </div>
+
+        <div className="space-y-8">
+          {/* Create Team */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">创建队伍</h2>
+            <form onSubmit={handleCreateTeam} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">名称</label>
+                <input required type="text" value={newTeam.name} onChange={e => setNewTeam({...newTeam, name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">赛区</label>
+                  <input type="text" value={newTeam.region} onChange={e => setNewTeam({...newTeam, region: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">Logo URL</label>
+                  <input type="url" value={newTeam.logo_url} onChange={e => setNewTeam({...newTeam, logo_url: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">描述</label>
+                <textarea value={newTeam.description} onChange={e => setNewTeam({...newTeam, description: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={2}></textarea>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">相关引用/文章 (每行一个链接)</label>
+                <textarea value={newTeam.reference_links} onChange={e => setNewTeam({...newTeam, reference_links: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="https://example.com/article1&#10;https://example.com/article2"></textarea>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">历史战绩</label>
+                <textarea value={(newTeam as any).historical_records || ''} onChange={e => setNewTeam({...newTeam, historical_records: e.target.value} as any)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="例如：2023年全球总决赛冠军"></textarea>
+              </div>
+              <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+                创建队伍
+              </button>
+            </form>
+          </div>
+
+          {/* Edit Team */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">编辑队伍</h2>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-400 mb-1">选择队伍</label>
+              <select value={editingTeamId} onChange={handleEditTeamSelect} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                <option value="">选择要编辑的队伍...</option>
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            {editingTeamId && (
+              <form onSubmit={handleUpdateTeam} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">名称</label>
+                  <input required type="text" value={editTeam.name} onChange={e => setEditTeam({...editTeam, name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-1">赛区</label>
+                    <input type="text" value={editTeam.region} onChange={e => setEditTeam({...editTeam, region: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-1">Logo URL</label>
+                    <input type="url" value={editTeam.logo_url} onChange={e => setEditTeam({...editTeam, logo_url: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">描述</label>
+                  <textarea value={editTeam.description} onChange={e => setEditTeam({...editTeam, description: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={2}></textarea>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">相关引用/文章 (每行一个链接)</label>
+                  <textarea value={editTeam.reference_links} onChange={e => setEditTeam({...editTeam, reference_links: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="https://example.com/article1&#10;https://example.com/article2"></textarea>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">历史战绩</label>
+                  <textarea value={editTeam.historical_records} onChange={e => setEditTeam({...editTeam, historical_records: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="例如：2023年全球总决赛冠军"></textarea>
+                </div>
+                <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+                  更新队伍
+                </button>
+              </form>
+            )}
+          </div>
+
+          {/* Add Team to Tournament */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">添加队伍到赛事</h2>
+            <form onSubmit={handleAddTeamToTournament} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">赛事</label>
+                <select required value={selectedTournamentId} onChange={e => setSelectedTournamentId(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="">选择赛事...</option>
+                  {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">队伍</label>
+                <select required value={selectedTeamId} onChange={e => setSelectedTeamId(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="">选择队伍...</option>
+                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+                添加队伍
+              </button>
+            </form>
+          </div>
+          
+          {/* Add Tournament Stage */}
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+            <h2 className="text-xl font-bold text-white mb-4">添加赛事阶段</h2>
+            <form onSubmit={handleAddStage} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">赛事</label>
+                <select required value={newStage.tournament_id} onChange={e => setNewStage({...newStage, tournament_id: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="">选择赛事...</option>
+                  {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">阶段名称 (如 小组赛)</label>
+                  <input required type="text" value={newStage.name} onChange={e => setNewStage({...newStage, name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">赛制</label>
+                  <select value={newStage.format} onChange={e => setNewStage({...newStage, format: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                    <option value="Swiss">瑞士轮 (Swiss)</option>
+                    <option value="Round Robin">循环赛 (Round Robin)</option>
+                    <option value="Single Elimination">单败淘汰 (Single Elimination)</option>
+                    <option value="Double Elimination">双败淘汰 (Double Elimination)</option>
+                  </select>
+                </div>
+              </div>
+              <button type="submit" className="w-full bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
+                添加阶段
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      {/* Add Match */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-6 max-w-4xl">
+        <h2 className="text-xl font-bold text-white mb-4">添加比赛记录</h2>
+        <form onSubmit={handleAddMatch} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">赛事</label>
+              <select required value={newMatch.tournament_id} onChange={e => setNewMatch({...newMatch, tournament_id: e.target.value, stage: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                <option value="">选择赛事...</option>
+                {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">阶段</label>
+              <select required value={newMatch.stage} onChange={e => setNewMatch({...newMatch, stage: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" disabled={!newMatch.tournament_id}>
+                <option value="">选择阶段...</option>
+                {selectedTournament?.stages?.map(s => <option key={s.id} value={s.name}>{s.name} ({s.format})</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">轮次 (Round)</label>
+              <input required type="number" min="1" value={newMatch.round} onChange={e => setNewMatch({...newMatch, round: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center bg-slate-950/50 p-4 rounded-lg border border-slate-800">
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">队伍 1</label>
+                <select required value={newMatch.team1_id} onChange={e => setNewMatch({...newMatch, team1_id: e.target.value})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="">选择队伍 1...</option>
+                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">队伍 1 得分</label>
+                <input required type="number" min="0" value={newMatch.team1_score} onChange={e => setNewMatch({...newMatch, team1_score: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">队伍 2</label>
+                <select required value={newMatch.team2_id} onChange={e => setNewMatch({...newMatch, team2_id: e.target.value})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                  <option value="">选择队伍 2...</option>
+                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-1">队伍 2 得分</label>
+                <input required type="number" min="0" value={newMatch.team2_score} onChange={e => setNewMatch({...newMatch, team2_score: parseInt(e.target.value)})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">状态</label>
+              <select required value={newMatch.status} onChange={e => setNewMatch({...newMatch, status: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                <option value="Scheduled">未开始 (Scheduled)</option>
+                <option value="Ongoing">进行中 (Ongoing)</option>
+                <option value="Completed">已结束 (Completed)</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-400 mb-1">比赛时间</label>
+              <DatePicker 
+                selected={newMatch.match_date} 
+                onChange={(date: Date | null) => date && setNewMatch({...newMatch, match_date: date})} 
+                showTimeSelect
+                timeFormat="HH:mm"
+                timeIntervals={15}
+                timeCaption="时间"
+                dateFormat="yyyy-MM-dd HH:mm"
+                locale={zhCN}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+          </div>
+          
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-1">AI 总结输入 (输入比赛详细数据，AI将自动生成总结)</label>
+            <textarea 
+              value={matchDetails} 
+              onChange={e => setMatchDetails(e.target.value)} 
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" 
+              rows={4}
+              placeholder="例如：第一局队伍A选了... 队伍B选了... 20分钟爆发团战..."
+            ></textarea>
+          </div>
+
+          <button type="submit" disabled={isGeneratingReport} className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-800 text-white font-medium py-2 px-4 rounded-lg transition-colors flex justify-center items-center">
+            {isGeneratingReport ? 'AI 正在生成总结并添加比赛...' : '添加比赛'}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}

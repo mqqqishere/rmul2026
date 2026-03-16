@@ -1,0 +1,5 @@
+{
+  "name": "Esports Hub",
+  "description": "An esports tournament website similar to Liquipedia with tournament lists, details, Swiss/Round-Robin stages, team profiles, and an admin backend.",
+  "requestFramePermissions": []
+}
