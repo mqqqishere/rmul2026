@@ -404,28 +404,37 @@ app.delete('/api/tournaments/:id/teams/:teamId', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ... 前面的 import 和 initDb 保持不变 ...
 
 async function startServer() {
-  await initDb();
-  
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'custom'
-    });
-    app.use(vite.middlewares);
-  } else {
-    app.use(express.static('dist'));
+  // 在 Vercel 环境下，我们只做数据库初始化
+  // Vercel 会自动处理静态资源，不需要我们手动 app.use(express.static('dist'))
+  try {
+    await initDb();
+    console.log('Database sync complete');
+  } catch (err) {
+    console.error('Database sync failed:', err);
   }
 
-  // 重要：只有在非 Vercel 环境下才手动监听端口
+  // 只有在本地开发（非 Vercel）时才启动 Vite 或监听端口
   if (!process.env.VERCEL) {
+    if (process.env.NODE_ENV !== 'production') {
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'custom'
+      });
+      app.use(vite.middlewares);
+    } else {
+      app.use(express.static('dist'));
+    }
+
     const port = process.env.PORT || 3000;
-    app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
+    app.listen(port, () => console.log(`Local server running on http://localhost:${port}`));
   }
 }
 
+// 执行启动逻辑
 startServer();
 
-// 重要：必须导出 app 供 Vercel 调用
+// 必须导出 app，Vercel 才能调用它作为 Serverless Function
 export default app;
