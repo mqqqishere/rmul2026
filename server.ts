@@ -186,9 +186,34 @@ app.post('/api/ai/summarize', async (req, res) => {
   }
 });
 
+app.post('/api/ai/test', async (req, res) => {
+  try {
+    const result = await generateAIContent('请回复"连接成功"这四个字，不要有其他内容。');
+    res.json({ success: true, response: result });
+  } catch (error: any) {
+    res.status(500).json({ success: false, error: error.message || 'AI 测试失败' });
+  }
+});
+
 app.post('/api/ai/predict', async (req, res) => {
   try {
-    const { team1Name, team2Name, history } = req.body;
+    const { team1Name, team2Name, team1Details, team2Details, historicalMatches } = req.body;
+    const history = {
+      team1: { name: team1Name, ...(team1Details || {}) },
+      team2: { name: team2Name, ...(team2Details || {}) },
+      matches: (historicalMatches || []).map((m: any) => ({
+        tournament: m.tournament_name,
+        stage: m.stage,
+        round: m.round,
+        date: m.match_date,
+        team1: m.team1_name,
+        score: `${m.team1_score}-${m.team2_score}`,
+        team2: m.team2_name,
+        status: m.status,
+        ai_summary: m.report || null,
+        raw_details: m.raw_report || null
+      }))
+    };
     const prompt = `请根据以下两支队伍（${team1Name} vs ${team2Name}）的历史交锋记录和近期战绩，生成一份专业的中文赛前预测报告，要求完全依据历史数据内容，若无充分数据支持，请只列举对战数据及总结之前对战的详细报告，按两队伍各自历史成绩，交手记录，详细报告分析三个环节输出：\n\n历史数据：\n${JSON.stringify(history)}`;
     const prediction = await generateAIContent(prompt);
     res.json({ prediction });
@@ -342,6 +367,15 @@ app.post('/api/tournaments/:id/stages', async (req, res) => {
       INSERT INTO tournament_stages (tournament_id, name, format) VALUES (${req.params.id}, ${name}, ${format}) RETURNING id
     `;
     res.json({ id: result.rows[0].id });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/tournaments/:id/stages/:stageId', async (req, res) => {
+  try {
+    await sql`DELETE FROM tournament_stages WHERE id = ${req.params.stageId} AND tournament_id = ${req.params.id}`;
+    res.json({ success: true });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }

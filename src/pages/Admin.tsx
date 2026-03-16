@@ -152,19 +152,49 @@ export default function Admin() {
   const handleUpdateMatch = async (e: FormEvent) => {
     e.preventDefault();
     if (!editingMatchId) return;
+
+    let report = '';
+    const existingMatch = allMatches.find(x => x.id.toString() === editingMatchId);
+    if (editMatchDetails && editUseAiSummary) {
+      setIsGeneratingReport(true);
+      try {
+        const res = await fetch('/api/ai/summarize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rawDetails: editMatchDetails })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          report = data.summary;
+        } else {
+          const errorData = await res.json();
+          alert(`AI 总结生成失败: ${errorData.error || '未知错误'}`);
+        }
+      } catch (error) {
+        console.error("AI Error:", error);
+        alert('AI 总结生成失败。');
+      } finally {
+        setIsGeneratingReport(false);
+      }
+    } else {
+      report = existingMatch?.report || '';
+    }
+
     await fetch(`/api/matches/${editingMatchId}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...editMatch,
         match_date: editMatch.match_date.toISOString(),
-        raw_report: editMatchDetails
+        raw_report: editMatchDetails,
+        report
       })
     });
     alert('比赛已更新！');
     setEditingMatchId('');
     setEditMatch({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
     setEditMatchDetails('');
+    setEditUseAiSummary(false);
     fetchData();
   };
 
@@ -181,6 +211,7 @@ export default function Admin() {
   // AI Import state
   const [importText, setImportText] = useState('');
   const [importPreview, setImportPreview] = useState<{ teams: any[]; matches: any[] } | null>(null);
+  const [importMatchTournamentIds, setImportMatchTournamentIds] = useState<string[]>([]);
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [isConfirmingImport, setIsConfirmingImport] = useState(false);
   const [importLog, setImportLog] = useState<string[]>([]);
@@ -201,6 +232,7 @@ export default function Admin() {
     setIsParsingImport(true);
     setImportPreview(null);
     setImportLog([]);
+    setImportMatchTournamentIds([]);
     try {
       const res = await fetch('/api/ai/import-table', {
         method: 'POST',
@@ -213,7 +245,9 @@ export default function Admin() {
         return;
       }
       const data = await res.json();
-      setImportPreview({ teams: data.teams || [], matches: data.matches || [] });
+      const matches = data.matches || [];
+      setImportPreview({ teams: data.teams || [], matches });
+      setImportMatchTournamentIds(matches.map(() => ''));
     } catch (err: any) {
       alert(`请求失败: ${err.message}`);
     } finally {
@@ -260,37 +294,49 @@ export default function Admin() {
 
     // Create matches if any
     if (importPreview.matches.length > 0) {
-      // Ensure a "历史数据" tournament exists
-      let histTournamentId = '';
+      // Fetch all tournaments for fallback "历史数据"
       let allTournaments: Tournament[] = [];
       try {
         const tourRes = await fetch('/api/tournaments');
         if (tourRes.ok) allTournaments = await tourRes.json();
       } catch { /* use empty list */ }
+
+      // Ensure fallback "历史数据" tournament exists
+      let histTournamentId = '';
       const histTournament = allTournaments.find(t => t.name === '历史数据');
       if (histTournament) {
         histTournamentId = histTournament.id.toString();
-      } else {
-        const res = await fetch('/api/tournaments', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: '历史数据', game: '综合', start_date: '2020-01-01', end_date: '2024-12-31', prize_pool: '', status: 'Completed', description: 'AI 导入的历史数据', format: 'Round Robin' })
-        });
-        const data = await res.json();
-        histTournamentId = data.id?.toString() || '';
-        logs.push(`📁 创建历史数据赛事`);
       }
 
-      for (const m of importPreview.matches) {
+      for (let idx = 0; idx < importPreview.matches.length; idx++) {
+        const m = importPreview.matches[idx];
         const t1id = teamNameToId[m.team1_name];
         const t2id = teamNameToId[m.team2_name];
         if (!t1id || !t2id) { logs.push(`⚠️ 跳过比赛（队伍未找到）：${m.team1_name} vs ${m.team2_name}`); continue; }
+
+        // Use per-match tournament selection, fallback to "历史数据"
+        let tournamentId = importMatchTournamentIds[idx] || '';
+        if (!tournamentId) {
+          if (!histTournamentId) {
+            const res = await fetch('/api/tournaments', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: '历史数据', game: '综合', start_date: '2020-01-01', end_date: '2024-12-31', prize_pool: '', status: 'Completed', description: 'AI 导入的历史数据', format: 'Round Robin' })
+            });
+            const data = await res.json();
+            histTournamentId = data.id?.toString() || '';
+            logs.push(`📁 创建历史数据赛事`);
+          }
+          tournamentId = histTournamentId;
+        }
+
         await fetch('/api/matches', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tournament_id: histTournamentId, stage: m.stage || '历史记录', round: 1, team1_id: t1id, team2_id: t2id, team1_score: m.team1_score || 0, team2_score: m.team2_score || 0, status: 'Completed', match_date: new Date().toISOString(), report: m.notes || '', raw_report: m.notes || '' })
+          body: JSON.stringify({ tournament_id: tournamentId, stage: m.stage || '历史记录', round: 1, team1_id: t1id, team2_id: t2id, team1_score: m.team1_score || 0, team2_score: m.team2_score || 0, status: 'Completed', match_date: new Date().toISOString(), report: m.notes || '', raw_report: m.notes || '' })
         });
-        logs.push(`✅ 创建比赛：${m.team1_name} ${m.team1_score}-${m.team2_score} ${m.team2_name}`);
+        const selectedTour = allTournaments.find(t => t.id.toString() === tournamentId);
+        logs.push(`✅ 创建比赛：${m.team1_name} ${m.team1_score}-${m.team2_score} ${m.team2_name}（赛事：${selectedTour?.name || tournamentId}）`);
       }
     }
 
@@ -298,6 +344,7 @@ export default function Admin() {
     setIsConfirmingImport(false);
     setImportPreview(null);
     setImportText('');
+    setImportMatchTournamentIds([]);
     fetchData();
     alert('导入完成！');
   };
@@ -309,14 +356,20 @@ export default function Admin() {
   const [apiUrl, setApiUrl] = useState('');
   const [aiModel, setAiModel] = useState('');
   const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+  const [isTestingApi, setIsTestingApi] = useState(false);
+  const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Add match state
   const [newMatch, setNewMatch] = useState({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
   const [matchDetails, setMatchDetails] = useState('');
+  const [useAiSummary, setUseAiSummary] = useState(true);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
 
-  // Add stage state
-  const [newStage, setNewStage] = useState({ tournament_id: '', name: '', format: 'Swiss' });
+  // Edit match AI toggle
+  const [editUseAiSummary, setEditUseAiSummary] = useState(false);
+
+  // Add stage state (for edit tournament section)
+  const [newStage, setNewStage] = useState({ name: '', format: 'Swiss' });
 
   const fetchData = () => {
     fetch('/api/tournaments').then(res => res.json()).then(setTournaments);
@@ -373,15 +426,22 @@ export default function Admin() {
 
   const handleAddStage = async (e: FormEvent) => {
     e.preventDefault();
-    if (!newStage.tournament_id) return;
+    if (!editingTournamentId) return;
     
-    await fetch(`/api/tournaments/${newStage.tournament_id}/stages`, {
+    await fetch(`/api/tournaments/${editingTournamentId}/stages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name: newStage.name, format: newStage.format })
     });
     alert('赛事阶段已添加！');
-    setNewStage({ tournament_id: '', name: '', format: 'Swiss' });
+    setNewStage({ name: '', format: 'Swiss' });
+    fetchData();
+  };
+
+  const handleDeleteStage = async (stageId: number) => {
+    if (!editingTournamentId) return;
+    if (!window.confirm('确定要删除此阶段？')) return;
+    await fetch(`/api/tournaments/${editingTournamentId}/stages/${stageId}`, { method: 'DELETE' });
     fetchData();
   };
 
@@ -390,7 +450,7 @@ export default function Admin() {
     if (!newMatch.tournament_id || !newMatch.team1_id || !newMatch.team2_id) return;
     
     let report = '';
-    if (matchDetails) {
+    if (matchDetails && useAiSummary) {
       setIsGeneratingReport(true);
       try {
         const res = await fetch('/api/ai/summarize', {
@@ -450,6 +510,24 @@ export default function Admin() {
       alert('保存失败');
     } finally {
       setIsSavingApiKey(false);
+    }
+  };
+
+  const handleTestApi = async () => {
+    setIsTestingApi(true);
+    setApiTestResult(null);
+    try {
+      const res = await fetch('/api/ai/test', { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setApiTestResult({ success: true, message: `✅ 连接成功！响应：${data.response}` });
+      } else {
+        setApiTestResult({ success: false, message: `❌ 连接失败：${data.error}` });
+      }
+    } catch (err: any) {
+      setApiTestResult({ success: false, message: `❌ 请求失败：${err.message}` });
+    } finally {
+      setIsTestingApi(false);
     }
   };
 
@@ -521,6 +599,19 @@ export default function Admin() {
           >
             {isSavingApiKey ? '保存中...' : '保存 AI 设置'}
           </button>
+          <button
+            type="button"
+            onClick={handleTestApi}
+            disabled={isTestingApi}
+            className="bg-slate-700 hover:bg-slate-600 text-white px-6 py-2 rounded-lg font-medium transition-colors disabled:opacity-50 ml-3"
+          >
+            {isTestingApi ? '测试中...' : '🔌 测试 AI 连接'}
+          </button>
+          {apiTestResult && (
+            <p className={`mt-2 text-sm ${apiTestResult.success ? 'text-emerald-400' : 'text-red-400'}`}>
+              {apiTestResult.message}
+            </p>
+          )}
         </form>
       </div>
 
@@ -592,14 +683,28 @@ export default function Admin() {
                 )}
                 {importPreview.matches.length > 0 && (
                   <div>
-                    <p className="text-slate-400 text-sm font-medium mb-1">比赛记录（将导入至"历史数据"赛事）：</p>
-                    <div className="space-y-1">
+                    <p className="text-slate-400 text-sm font-medium mb-2">比赛记录（请为每场比赛选择赛事，不选则导入至"历史数据"）：</p>
+                    <div className="space-y-2">
                       {importPreview.matches.map((m, i) => (
-                        <div key={i} className="text-sm text-slate-300 bg-slate-900 rounded px-3 py-1">
-                          <span className="text-emerald-400">{m.team1_name}</span>
-                          <span className="text-white mx-2 font-bold">{m.team1_score} - {m.team2_score}</span>
-                          <span className="text-emerald-400">{m.team2_name}</span>
-                          {m.stage && <span className="text-slate-500 ml-2">[{m.stage}]</span>}
+                        <div key={i} className="bg-slate-900 rounded px-3 py-2 space-y-1">
+                          <div className="text-sm text-slate-300 flex items-center gap-1 flex-wrap">
+                            <span className="text-emerald-400">{m.team1_name}</span>
+                            <span className="text-white font-bold">{m.team1_score} - {m.team2_score}</span>
+                            <span className="text-emerald-400">{m.team2_name}</span>
+                            {m.stage && <span className="text-slate-500 ml-1">[{m.stage}]</span>}
+                          </div>
+                          <select
+                            value={importMatchTournamentIds[i] || ''}
+                            onChange={e => {
+                              const newIds = [...importMatchTournamentIds];
+                              newIds[i] = e.target.value;
+                              setImportMatchTournamentIds(newIds);
+                            }}
+                            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-emerald-500"
+                          >
+                            <option value="">自动（导入至"历史数据"）</option>
+                            {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
                         </div>
                       ))}
                     </div>
@@ -757,6 +862,45 @@ export default function Admin() {
               </button>
             </form>
           )}
+          {editingTournamentId && (
+            <div className="mt-6 pt-6 border-t border-slate-800">
+              <h3 className="text-lg font-bold text-white mb-3">赛事阶段管理</h3>
+              {/* Current stages */}
+              {(() => {
+                const t = tournaments.find(x => x.id.toString() === editingTournamentId);
+                const stages = t?.stages || [];
+                return stages.length > 0 ? (
+                  <div className="space-y-2 mb-4">
+                    {stages.map(s => (
+                      <div key={s.id} className="flex items-center justify-between bg-slate-950 rounded-lg px-3 py-2">
+                        <span className="text-slate-300 text-sm">{s.name} <span className="text-slate-500">({s.format})</span></span>
+                        <button type="button" onClick={() => handleDeleteStage(s.id)} className="text-red-500 hover:text-red-400 text-xs">删除</button>
+                      </div>
+                    ))}
+                  </div>
+                ) : <p className="text-slate-500 text-sm mb-4">暂无阶段</p>;
+              })()}
+              {/* Add stage */}
+              <form onSubmit={handleAddStage} className="flex gap-2 items-end flex-wrap">
+                <div className="flex-1 min-w-32">
+                  <label className="block text-xs font-medium text-slate-400 mb-1">阶段名称</label>
+                  <input required type="text" value={newStage.name} onChange={e => setNewStage({...newStage, name: e.target.value})} placeholder="如 小组赛" className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500" />
+                </div>
+                <div className="flex-1 min-w-32">
+                  <label className="block text-xs font-medium text-slate-400 mb-1">赛制</label>
+                  <select value={newStage.format} onChange={e => setNewStage({...newStage, format: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500">
+                    <option value="Swiss">瑞士轮</option>
+                    <option value="Round Robin">循环赛</option>
+                    <option value="Single Elimination">单败淘汰</option>
+                    <option value="Double Elimination">双败淘汰</option>
+                  </select>
+                </div>
+                <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
+                  添加阶段
+                </button>
+              </form>
+            </div>
+          )}
         </div>
       </div>
 
@@ -869,38 +1013,6 @@ export default function Admin() {
               </button>
             </form>
           </div>
-          
-          {/* Add Tournament Stage */}
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-            <h2 className="text-xl font-bold text-white mb-4">添加赛事阶段</h2>
-            <form onSubmit={handleAddStage} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-400 mb-1">赛事</label>
-                <select required value={newStage.tournament_id} onChange={e => setNewStage({...newStage, tournament_id: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
-                  <option value="">选择赛事...</option>
-                  {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">阶段名称 (如 小组赛)</label>
-                  <input required type="text" value={newStage.name} onChange={e => setNewStage({...newStage, name: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-400 mb-1">赛制</label>
-                  <select value={newStage.format} onChange={e => setNewStage({...newStage, format: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
-                    <option value="Swiss">瑞士轮 (Swiss)</option>
-                    <option value="Round Robin">循环赛 (Round Robin)</option>
-                    <option value="Single Elimination">单败淘汰 (Single Elimination)</option>
-                    <option value="Double Elimination">双败淘汰 (Double Elimination)</option>
-                  </select>
-                </div>
-              </div>
-              <button type="submit" className="w-full bg-purple-500 hover:bg-purple-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
-                添加阶段
-              </button>
-            </form>
-          </div>
         </div>
       </div>
 
@@ -985,7 +1097,7 @@ export default function Admin() {
           </div>
           
           <div>
-            <label className="block text-sm font-medium text-slate-400 mb-1">AI 总结输入 (输入比赛详细数据，AI将自动生成总结)</label>
+            <label className="block text-sm font-medium text-slate-400 mb-1">比赛详细数据</label>
             <textarea 
               value={matchDetails} 
               onChange={e => setMatchDetails(e.target.value)} 
@@ -993,6 +1105,15 @@ export default function Admin() {
               rows={4}
               placeholder="例如：第一局队伍A选了... 队伍B选了... 20分钟爆发团战..."
             ></textarea>
+            <label className="flex items-center gap-2 mt-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useAiSummary}
+                onChange={e => setUseAiSummary(e.target.checked)}
+                className="w-4 h-4 accent-emerald-500"
+              />
+              <span className="text-sm text-slate-400">使用 AI 自动生成总结（关闭则仅保存原始数据）</span>
+            </label>
           </div>
 
           <button type="submit" disabled={isGeneratingReport} className="w-full bg-indigo-500 hover:bg-indigo-600 disabled:bg-indigo-800 text-white font-medium py-2 px-4 rounded-lg transition-colors flex justify-center items-center">
@@ -1092,6 +1213,15 @@ export default function Admin() {
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">比赛详细记录</label>
               <textarea value={editMatchDetails} onChange={e => setEditMatchDetails(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={4} placeholder="例如：第一局队伍A选了..."></textarea>
+              <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editUseAiSummary}
+                  onChange={e => setEditUseAiSummary(e.target.checked)}
+                  className="w-4 h-4 accent-emerald-500"
+                />
+                <span className="text-sm text-slate-400">重新用 AI 生成总结（关闭则保留原有总结）</span>
+              </label>
             </div>
             <div className="flex gap-3">
               <button type="submit" className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
