@@ -42,17 +42,31 @@ export default function CompareTeams() {
     
     setLoadingPrediction(true);
     try {
-      const team1Name = teams.find(t => t.id.toString() === team1Id)?.name;
-      const team2Name = teams.find(t => t.id.toString() === team2Id)?.name;
-      
+      const [team1Res, team2Res] = await Promise.all([
+        fetch(`/api/teams/${team1Id}`),
+        fetch(`/api/teams/${team2Id}`)
+      ]);
+      const team1Data = team1Res.ok ? await team1Res.json() : teams.find(t => t.id.toString() === team1Id);
+      const team2Data = team2Res.ok ? await team2Res.json() : teams.find(t => t.id.toString() === team2Id);
+
       const response = await fetch('/api/ai/predict', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          team1Name,
-          team2Name,
+          team1Name: team1Data?.name,
+          team2Name: team2Data?.name,
+          team1Details: {
+            historical_records: team1Data?.historical_records || '',
+            description: team1Data?.description || '',
+            region: team1Data?.region || ''
+          },
+          team2Details: {
+            historical_records: team2Data?.historical_records || '',
+            description: team2Data?.description || '',
+            region: team2Data?.region || ''
+          },
           historicalMatches: matches
         }),
       });
