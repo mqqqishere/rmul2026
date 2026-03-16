@@ -189,7 +189,7 @@ app.post('/api/ai/summarize', async (req, res) => {
 app.post('/api/ai/predict', async (req, res) => {
   try {
     const { team1Name, team2Name, history } = req.body;
-    const prompt = `请根据以下两支队伍（${team1Name} vs ${team2Name}）的历史交锋记录和近期战绩，生成一份专业的中文赛前预测报告（包含胜率预测、关键对局分析和战术侧重点）：\n\n历史数据：\n${JSON.stringify(history)}`;
+    const prompt = `请根据以下两支队伍（${team1Name} vs ${team2Name}）的历史交锋记录和近期战绩，生成一份专业的中文赛前预测报告，要求完全依据历史数据内容，若无充分数据支持，请只列举对战数据及总结之前对战的详细报告，按两队伍各自历史成绩，交手记录，详细报告分析三个环节输出：\n\n历史数据：\n${JSON.stringify(history)}`;
     const prediction = await generateAIContent(prompt);
     res.json({ prediction });
   } catch (error: any) {
