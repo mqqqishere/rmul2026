@@ -198,6 +198,62 @@ app.post('/api/ai/predict', async (req, res) => {
   }
 });
 
+app.post('/api/ai/import-table', async (req, res) => {
+  try {
+    const { tableData } = req.body;
+    if (!tableData || typeof tableData !== 'string') {
+      return res.status(400).json({ error: '请提供表格数据' });
+    }
+    const prompt = `请解析以下表格数据，识别战队名称、历史战绩和历史比赛信息，并以JSON格式返回（只返回JSON，不要有任何其他文字或代码块标记）。
+
+表格数据：
+${tableData}
+
+请返回如下格式：
+{
+  "teams": [
+    {
+      "name": "战队名称",
+      "region": "赛区（如能识别，否则留空）",
+      "historical_records": "所有历史奖项和战绩的汇总文字",
+      "description": "简短描述（可选）"
+    }
+  ],
+  "matches": [
+    {
+      "team1_name": "战队1名称",
+      "team2_name": "战队2名称",
+      "team1_score": 0,
+      "team2_score": 0,
+      "stage": "赛段名称（如无则填历史记录）",
+      "notes": "备注"
+    }
+  ]
+}
+
+注意：
+- 每行数据对应一支战队
+- 如果比分格式为"2-1"，team1_score=2, team2_score=1
+- 如果没有明确的对战比赛数据，matches数组返回空数组[]
+- historical_records字段应整合该战队所有的历史信息（奖项、比分等）
+- 只返回纯JSON，不要markdown代码块`;
+    const result = await generateAIContent(prompt);
+    if (!result || !result.trim()) {
+      return res.status(500).json({ error: 'AI 未返回有效数据，请检查 AI 配置后重试' });
+    }
+    let parsed: any;
+    try {
+      const cleaned = result.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      return res.status(500).json({ error: 'AI 返回的数据格式无效，请重试', raw: result });
+    }
+    res.json(parsed);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'AI 导入解析失败' });
+  }
+});
+
 // Tournaments
 app.get('/api/tournaments', async (req, res) => {
   try {
@@ -352,7 +408,51 @@ app.put('/api/teams/:id', async (req, res) => {
   }
 });
 
+app.delete('/api/tournaments/:id', async (req, res) => {
+  try {
+    await sql`DELETE FROM tournaments WHERE id = ${req.params.id}`;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/teams/:id', async (req, res) => {
+  try {
+    await sql`DELETE FROM teams WHERE id = ${req.params.id}`;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Matches
+app.get('/api/matches', async (req, res) => {
+  try {
+    const { rows } = await sql`
+      SELECT m.*, t1.name as team1_name, t1.logo_url as team1_logo, t2.name as team2_name, t2.logo_url as team2_logo, tr.name as tournament_name
+      FROM matches m
+      LEFT JOIN teams t1 ON m.team1_id = t1.id
+      LEFT JOIN teams t2 ON m.team2_id = t2.id
+      LEFT JOIN tournaments tr ON m.tournament_id = tr.id
+      ORDER BY m.match_date DESC
+      LIMIT 200
+    `;
+    res.json(rows);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/matches/:id', async (req, res) => {
+  try {
+    await sql`DELETE FROM matches WHERE id = ${req.params.id}`;
+    res.json({ success: true });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/matches/compare/:team1/:team2', async (req, res) => {
   const { team1, team2 } = req.params;
   try {
