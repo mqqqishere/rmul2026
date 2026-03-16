@@ -7,7 +7,7 @@ import { GoogleGenAI } from '@google/genai';
 const app = express();
 app.use(express.json());
 
-// 初始化数据库表（异步）
+// 初始化数据库表（异步 Postgres 语法）
 async function initDb() {
   try {
     await sql`
@@ -35,13 +35,6 @@ async function initDb() {
       );
     `;
     await sql`
-      CREATE TABLE IF NOT EXISTS tournament_teams (
-        tournament_id INTEGER,
-        team_id INTEGER,
-        PRIMARY KEY (tournament_id, team_id)
-      );
-    `;
-    await sql`
       CREATE TABLE IF NOT EXISTS matches (
         id SERIAL PRIMARY KEY,
         tournament_id INTEGER,
@@ -62,7 +55,7 @@ async function initDb() {
   }
 }
 
-// 修改 API 路由为异步处理
+// 获取赛事列表
 app.get('/api/tournaments', async (req, res) => {
   try {
     const { rows } = await sql`SELECT * FROM tournaments ORDER BY id DESC`;
@@ -72,6 +65,7 @@ app.get('/api/tournaments', async (req, res) => {
   }
 });
 
+// 创建赛事
 app.post('/api/tournaments', async (req, res) => {
   const { name, game, start_date, end_date, prize_pool, status, description, format } = req.body;
   try {
@@ -86,18 +80,15 @@ app.post('/api/tournaments', async (req, res) => {
   }
 });
 
-// 获取特定赛事详情
-app.get('/api/tournaments/:id', async (req, res) => {
+// 获取所有战队
+app.get('/api/teams', async (req, res) => {
   try {
-    const { rows } = await sql`SELECT * FROM tournaments WHERE id = ${req.params.id}`;
-    if (rows.length === 0) return res.status(404).send('Not found');
-    res.json(rows[0]);
+    const { rows } = await sql`SELECT * FROM teams ORDER BY name ASC`;
+    res.json(rows);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
-
-// ... 其他 API (teams, matches) 也要按照这个模式 async/await 改写 ...
 
 async function startServer() {
   await initDb();
@@ -112,8 +103,14 @@ async function startServer() {
     app.use(express.static('dist'));
   }
 
-  const port = process.env.PORT || 3000;
-  app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
+  // 重要：只有在非 Vercel 环境下才手动监听端口
+  if (!process.env.VERCEL) {
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => console.log(`Server running on http://localhost:${port}`));
+  }
 }
 
 startServer();
+
+// 重要：必须导出 app 供 Vercel 调用
+export default app;
