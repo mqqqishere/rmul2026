@@ -16,7 +16,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@types/react-datepicker": "^6.2.0",
     "@vitejs/plugin-react": "^5.0.4",
-    "better-sqlite3": "^12.4.1",
+    "@vercel/postgres": "^0.9.0",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "dotenv": "^17.2.3",
