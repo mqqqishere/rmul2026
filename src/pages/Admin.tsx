@@ -14,7 +14,7 @@ export default function Admin() {
   
   // Add team to tournament state
   const [selectedTournamentId, setSelectedTournamentId] = useState('');
-  const [selectedTeamId, setSelectedTeamId] = useState('');
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
 
   // Edit team state
   const [editingTeamId, setEditingTeamId] = useState('');
@@ -369,7 +369,7 @@ export default function Admin() {
   const [editUseAiSummary, setEditUseAiSummary] = useState(false);
 
   // Add stage state (for edit tournament section)
-  const [newStage, setNewStage] = useState({ name: '', format: 'Swiss' });
+  const [newStage, setNewStage] = useState({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5 });
 
   const fetchData = () => {
     fetch('/api/tournaments').then(res => res.json()).then(setTournaments);
@@ -414,14 +414,20 @@ export default function Admin() {
 
   const handleAddTeamToTournament = async (e: FormEvent) => {
     e.preventDefault();
-    if (!selectedTournamentId || !selectedTeamId) return;
-    
-    await fetch(`/api/tournaments/${selectedTournamentId}/teams`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ team_id: selectedTeamId })
-    });
-    alert('队伍已添加到赛事！');
+    if (!selectedTournamentId || selectedTeamIds.length === 0) return;
+
+    const results = await Promise.allSettled(
+      selectedTeamIds.map(teamId => fetch(`/api/tournaments/${selectedTournamentId}/teams`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ team_id: teamId })
+      }))
+    );
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value?.ok).length;
+    const failedCount = selectedTeamIds.length - successCount;
+    alert(`批量添加完成：成功 ${successCount} 支${failedCount > 0 ? `，失败 ${failedCount} 支（可能已存在）` : ''}`);
+    setSelectedTeamIds([]);
+    fetchData();
   };
 
   const handleAddStage = async (e: FormEvent) => {
@@ -431,10 +437,16 @@ export default function Admin() {
     await fetch(`/api/tournaments/${editingTournamentId}/stages`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newStage.name, format: newStage.format })
+      body: JSON.stringify({
+        name: newStage.name,
+        format: newStage.format,
+        group_count: newStage.format === 'Round Robin' ? newStage.group_count : null,
+        teams_per_group: newStage.format === 'Round Robin' ? newStage.teams_per_group : null,
+        swiss_rounds: newStage.format === 'Swiss' ? newStage.swiss_rounds : null
+      })
     });
     alert('赛事阶段已添加！');
-    setNewStage({ name: '', format: 'Swiss' });
+    setNewStage({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5 });
     fetchData();
   };
 
@@ -873,7 +885,15 @@ export default function Admin() {
                   <div className="space-y-2 mb-4">
                     {stages.map(s => (
                       <div key={s.id} className="flex items-center justify-between bg-slate-950 rounded-lg px-3 py-2">
-                        <span className="text-slate-300 text-sm">{s.name} <span className="text-slate-500">({s.format})</span></span>
+                        <span className="text-slate-300 text-sm">
+                          {s.name} <span className="text-slate-500">({s.format})</span>
+                          {s.format === 'Round Robin' && s.group_count && s.teams_per_group && (
+                            <span className="text-emerald-400 ml-2">[{s.group_count} 组 / 每组 {s.teams_per_group} 队]</span>
+                          )}
+                          {s.format === 'Swiss' && s.swiss_rounds && (
+                            <span className="text-emerald-400 ml-2">[{s.swiss_rounds} 轮]</span>
+                          )}
+                        </span>
                         <button type="button" onClick={() => handleDeleteStage(s.id)} className="text-red-500 hover:text-red-400 text-xs">删除</button>
                       </div>
                     ))}
@@ -895,6 +915,45 @@ export default function Admin() {
                     <option value="Double Elimination">双败淘汰</option>
                   </select>
                 </div>
+                {newStage.format === 'Round Robin' && (
+                  <>
+                    <div className="flex-1 min-w-28">
+                      <label className="block text-xs font-medium text-slate-400 mb-1">小组数</label>
+                      <input
+                        required
+                        type="number"
+                        min="1"
+                        value={newStage.group_count}
+                        onChange={e => setNewStage({...newStage, group_count: parseInt(e.target.value) || 1})}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                    <div className="flex-1 min-w-28">
+                      <label className="block text-xs font-medium text-slate-400 mb-1">每组队伍</label>
+                      <input
+                        required
+                        type="number"
+                        min="2"
+                        value={newStage.teams_per_group}
+                        onChange={e => setNewStage({...newStage, teams_per_group: parseInt(e.target.value) || 2})}
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
+                      />
+                    </div>
+                  </>
+                )}
+                {newStage.format === 'Swiss' && (
+                  <div className="flex-1 min-w-28">
+                    <label className="block text-xs font-medium text-slate-400 mb-1">瑞士轮轮数</label>
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      value={newStage.swiss_rounds}
+                      onChange={e => setNewStage({...newStage, swiss_rounds: parseInt(e.target.value) || 1})}
+                      className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                )}
                 <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
                   添加阶段
                 </button>
@@ -1003,13 +1062,23 @@ export default function Admin() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">队伍</label>
-                <select required value={selectedTeamId} onChange={e => setSelectedTeamId(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
-                  <option value="">选择队伍...</option>
+                <select
+                  required
+                  multiple
+                  value={selectedTeamIds}
+                  onChange={e => {
+                    const values = Array.from(e.target.selectedOptions, option => option.value);
+                    setSelectedTeamIds(values);
+                  }}
+                  aria-describedby="batch-team-select-help"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500 min-h-40"
+                >
                   {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
+                <p id="batch-team-select-help" className="text-xs text-slate-500 mt-1">支持批量选择：按住 Ctrl/Cmd 或 Shift 多选。</p>
               </div>
               <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
-                添加队伍
+                批量添加队伍
               </button>
             </form>
           </div>

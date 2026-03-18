@@ -13,6 +13,9 @@ export interface TournamentStage {
   tournament_id: number;
   name: string;
   format: string;
+  group_count?: number | null;
+  teams_per_group?: number | null;
+  swiss_rounds?: number | null;
 }
 
 export interface Match {

@@ -59,9 +59,15 @@ async function initDb() {
         tournament_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         format TEXT NOT NULL,
+        group_count INTEGER,
+        teams_per_group INTEGER,
+        swiss_rounds INTEGER,
         FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
       );
     `;
+    await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS group_count INTEGER;`;
+    await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS teams_per_group INTEGER;`;
+    await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS swiss_rounds INTEGER;`;
     await sql`
       CREATE TABLE IF NOT EXISTS matches (
         id SERIAL PRIMARY KEY,
@@ -361,10 +367,19 @@ app.get('/api/tournaments/:id/stages', async (req, res) => {
 });
 
 app.post('/api/tournaments/:id/stages', async (req, res) => {
-  const { name, format } = req.body;
+  const { name, format, group_count, teams_per_group, swiss_rounds } = req.body;
   try {
+    const parsedGroupCount = group_count != null ? parseInt(group_count, 10) : Number.NaN;
+    const parsedTeamsPerGroup = teams_per_group != null ? parseInt(teams_per_group, 10) : Number.NaN;
+    const parsedSwissRounds = swiss_rounds != null ? parseInt(swiss_rounds, 10) : Number.NaN;
+    const groupCount = !Number.isNaN(parsedGroupCount) && parsedGroupCount > 0 ? parsedGroupCount : null;
+    const teamsPerGroup = !Number.isNaN(parsedTeamsPerGroup) && parsedTeamsPerGroup > 0 ? parsedTeamsPerGroup : null;
+    const swissRounds = !Number.isNaN(parsedSwissRounds) && parsedSwissRounds > 0 ? parsedSwissRounds : null;
+
     const result = await sql`
-      INSERT INTO tournament_stages (tournament_id, name, format) VALUES (${req.params.id}, ${name}, ${format}) RETURNING id
+      INSERT INTO tournament_stages (tournament_id, name, format, group_count, teams_per_group, swiss_rounds)
+      VALUES (${req.params.id}, ${name}, ${format}, ${groupCount}, ${teamsPerGroup}, ${swissRounds})
+      RETURNING id
     `;
     res.json({ id: result.rows[0].id });
   } catch (error: any) {
