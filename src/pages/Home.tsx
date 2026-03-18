@@ -11,6 +11,14 @@ interface Tournament {
   end_date: string;
   prize_pool: string;
   status: string;
+  stages?: Array<{
+    id: number;
+    name: string;
+    format: string;
+    group_count?: number | null;
+    teams_per_group?: number | null;
+    swiss_rounds?: number | null;
+  }>;
 }
 
 export default function Home() {
@@ -74,6 +82,44 @@ export default function Home() {
                 </div>
               </div>
             </div>
+            {tournament.stages && tournament.stages.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-slate-800 space-y-2">
+                <p className="text-xs text-slate-500">赛制图表（阶段配置同步展示）</p>
+                {tournament.stages.map(stage => {
+                  const metric = stage.format === 'Swiss'
+                    ? stage.swiss_rounds || 0
+                    : stage.format === 'Round Robin'
+                      ? (stage.group_count || 0) * (stage.teams_per_group || 0)
+                      : 0;
+                  const maxBar = Math.max(
+                    ...tournament.stages!.map(s => s.format === 'Swiss'
+                      ? s.swiss_rounds || 0
+                      : s.format === 'Round Robin'
+                        ? (s.group_count || 0) * (s.teams_per_group || 0)
+                        : 0),
+                    1
+                  );
+                  const widthPercent = Math.max(8, Math.round((metric / maxBar) * 100));
+                  return (
+                    <div key={stage.id} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <span>{stage.name}</span>
+                        <span>
+                          {stage.format === 'Round Robin' && stage.group_count && stage.teams_per_group
+                            ? `${stage.group_count}组 × ${stage.teams_per_group}队`
+                            : stage.format === 'Swiss' && stage.swiss_rounds
+                              ? `${stage.swiss_rounds}轮`
+                              : stage.format}
+                        </span>
+                      </div>
+                      <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-emerald-500/70 rounded-full" style={{ width: `${widthPercent}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </Link>
         ))}
       </div>
