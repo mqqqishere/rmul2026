@@ -13,6 +13,44 @@ const buildGroupLabels = (groupCount?: number | null) => {
 
 const countChineseChars = (text: string) => (text.match(/[\u4e00-\u9fff]/g) || []).length;
 const countReplacementChars = (text: string) => (text.match(/�/g) || []).length;
+const URL_REGEX = /https?:\/\/[^\s,，;；]+/gi;
+
+const normalizeTeamName = (name: string) => (
+  String(name || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/([\u4e00-\u9fff])\s+([A-Za-z0-9])/g, '$1$2')
+    .replace(/([A-Za-z0-9])\s+([\u4e00-\u9fff])/g, '$1$2')
+    .toLowerCase()
+);
+
+const appendUniqueLinks = (existing: string, links: string[]) => {
+  const existingLines = (existing || '')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  const seen = new Set(existingLines);
+  for (const link of links) {
+    const trimmed = (link || '').trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    existingLines.push(trimmed);
+  }
+  return existingLines.join('\n');
+};
+
+const extractImportUrls = (team: any) => {
+  const fromFields = [
+    team?.reference_links,
+    team?.url,
+    Array.isArray(team?.urls) ? team.urls.join('\n') : team?.urls,
+    team?.historical_records,
+    team?.description
+  ];
+  const allText = fromFields.filter(Boolean).join('\n');
+  const matches = allText.match(URL_REGEX) || [];
+  return Array.from(new Set(matches.map(url => url.trim()).filter(Boolean)));
+};
 
 export default function Admin() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
@@ -29,6 +67,9 @@ export default function Admin() {
   // Edit team state
   const [editingTeamId, setEditingTeamId] = useState('');
   const [editTeam, setEditTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+  const [batchDeleteTournamentIds, setBatchDeleteTournamentIds] = useState<string[]>([]);
+  const [batchDeleteTeamIds, setBatchDeleteTeamIds] = useState<string[]>([]);
+  const [batchDeleteMatchIds, setBatchDeleteMatchIds] = useState<string[]>([]);
 
   const handleEditTeamSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const teamId = e.target.value;
@@ -118,6 +159,23 @@ export default function Admin() {
     fetchData();
   };
 
+  const handleBatchDeleteTournaments = async () => {
+    if (batchDeleteTournamentIds.length === 0) return;
+    if (!window.confirm(`确定批量删除 ${batchDeleteTournamentIds.length} 个赛事？相关比赛记录也会被删除。`)) return;
+    const results = await Promise.allSettled(
+      batchDeleteTournamentIds.map(id => fetch(`/api/tournaments/${id}`, { method: 'DELETE' }))
+    );
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
+    const failedCount = batchDeleteTournamentIds.length - successCount;
+    alert(`批量删除赛事完成：成功 ${successCount}${failedCount > 0 ? `，失败 ${failedCount}` : ''}`);
+    if (editingTournamentId && batchDeleteTournamentIds.includes(editingTournamentId)) {
+      setEditingTournamentId('');
+      setEditTournament({ name: '', game: '', start_date: new Date(), end_date: new Date(), prize_pool: '', status: 'Upcoming', description: '', format: 'Swiss' });
+    }
+    setBatchDeleteTournamentIds([]);
+    fetchData();
+  };
+
   // Delete team
   const handleDeleteTeam = async () => {
     if (!editingTeamId) return;
@@ -126,6 +184,23 @@ export default function Admin() {
     alert('队伍已删除！');
     setEditingTeamId('');
     setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+    fetchData();
+  };
+
+  const handleBatchDeleteTeams = async () => {
+    if (batchDeleteTeamIds.length === 0) return;
+    if (!window.confirm(`确定批量删除 ${batchDeleteTeamIds.length} 支队伍？相关比赛记录也会被删除。`)) return;
+    const results = await Promise.allSettled(
+      batchDeleteTeamIds.map(id => fetch(`/api/teams/${id}`, { method: 'DELETE' }))
+    );
+    const successCount = results.filter(r => r.status === 'fulfilled' && r.value.ok).length;
+    const failedCount = batchDeleteTeamIds.length - successCount;
+    alert(`批量删除队伍完成：成功 ${successCount}${failedCount > 0 ? `，失败 ${failedCount}` : ''}`);
+    if (editingTeamId && batchDeleteTeamIds.includes(editingTeamId)) {
+      setEditingTeamId('');
+      setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+    }
+    setBatchDeleteTeamIds([]);
     fetchData();
   };
 
@@ -218,6 +293,28 @@ export default function Admin() {
       setEditingMatchId('');
       setEditMatch({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
     }
+  };
+
+  const handleBatchDeleteMatches = async () => {
+    if (batchDeleteMatchIds.length === 0) return;
+    if (!window.confirm(`确定批量删除 ${batchDeleteMatchIds.length} 场比赛记录？`)) return;
+    const results = await Promise.allSettled(
+      batchDeleteMatchIds.map(id => fetch(`/api/matches/${id}`, { method: 'DELETE' }))
+    );
+    const successIds = results
+      .map((result, index) => (result.status === 'fulfilled' && result.value.ok ? batchDeleteMatchIds[index] : null))
+      .filter(Boolean) as string[];
+    const successCount = successIds.length;
+    const failedCount = batchDeleteMatchIds.length - successCount;
+    alert(`批量删除比赛完成：成功 ${successCount}${failedCount > 0 ? `，失败 ${failedCount}` : ''}`);
+    setAllMatches(prev => prev.filter(m => !successIds.includes(m.id.toString())));
+    if (editingMatchId && successIds.includes(editingMatchId)) {
+      setEditingMatchId('');
+      setEditMatch({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+      setEditMatchDetails('');
+      setEditUseAiSummary(false);
+    }
+    setBatchDeleteMatchIds([]);
   };
 
   // AI Import state
@@ -322,33 +419,52 @@ export default function Admin() {
       if (teamsRes.ok) existingTeams = await teamsRes.json();
     } catch { /* use empty list */ }
     const existingTeamMap: Record<string, Team> = {};
+    const normalizedTeamNameToReal: Record<string, string> = {};
     existingTeams.forEach(t => {
       teamNameToId[t.name] = t.id.toString();
       existingTeamMap[t.name] = t;
+      normalizedTeamNameToReal[normalizeTeamName(t.name)] = t.name;
     });
 
     // Create teams
     for (const t of importPreview.teams) {
       if (!importTeamColumns.name || !t.name) continue;
-      const existing = existingTeamMap[t.name];
+      const normalizedName = normalizeTeamName(t.name);
+      const matchedName = existingTeamMap[t.name]
+        ? t.name
+        : (normalizedTeamNameToReal[normalizedName] || t.name);
+      const existing = existingTeamMap[matchedName];
+      const importUrls = extractImportUrls(t);
+      const mergedReferenceLinks = appendUniqueLinks(existing?.reference_links || '', importUrls);
+      const pointsRaw = (t.points || '').toString().trim();
+      const rankingRaw = (t.points_ranking || '').toString().trim();
+      const mergedPointsRanking = pointsRaw && rankingRaw
+        ? `积分:${pointsRaw}; 排名:${rankingRaw}`
+        : (rankingRaw || pointsRaw);
+      if (importUrls.length > 0) {
+        logs.push(`🔗 识别到 ${importUrls.length} 个链接并合并至队伍相关文章：${matchedName}`);
+      }
+      if (matchedName !== t.name) {
+        logs.push(`🧩 队伍名模糊匹配：${t.name} → ${matchedName}`);
+      }
       const payload = {
-        name: t.name,
+        name: matchedName,
         logo_url: existing?.logo_url || '',
         region: importTeamColumns.region ? (t.region || '') : (existing?.region || ''),
         description: importTeamColumns.description ? (t.description || '') : (existing?.description || ''),
-        reference_links: existing?.reference_links || '',
+        reference_links: mergedReferenceLinks,
         historical_records: importTeamColumns.historical_records ? (t.historical_records || '') : (existing?.historical_records || ''),
-        points_ranking: importTeamColumns.points_ranking ? (t.points_ranking || '') : (existing?.points_ranking || ''),
+        points_ranking: importTeamColumns.points_ranking ? mergedPointsRanking : (existing?.points_ranking || ''),
         is_top_tier: importTeamColumns.is_top_tier ? Boolean(t.is_top_tier) : Boolean(existing?.is_top_tier)
       };
-      if (teamNameToId[t.name]) {
+      if (teamNameToId[matchedName]) {
         // Update existing team's historical_records
-        await fetch(`/api/teams/${teamNameToId[t.name]}`, {
+        await fetch(`/api/teams/${teamNameToId[matchedName]}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
         });
-        logs.push(`✏️ 更新队伍：${t.name}`);
+        logs.push(`✏️ 更新队伍：${matchedName}`);
       } else {
         const res = await fetch('/api/teams', {
           method: 'POST',
@@ -356,8 +472,10 @@ export default function Admin() {
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        teamNameToId[t.name] = data.id?.toString() || '';
-        logs.push(`✅ 创建队伍：${t.name}`);
+        teamNameToId[matchedName] = data.id?.toString() || '';
+        existingTeamMap[matchedName] = { ...(payload as Team), id: data.id };
+        normalizedTeamNameToReal[normalizedName] = matchedName;
+        logs.push(`✅ 创建队伍：${matchedName}`);
       }
     }
 
@@ -379,13 +497,20 @@ export default function Admin() {
 
       for (let idx = 0; idx < importPreview.matches.length; idx++) {
         const m = importPreview.matches[idx];
-        const team1Name = importMatchColumns.team1_name ? m.team1_name : '';
-        const team2Name = importMatchColumns.team2_name ? m.team2_name : '';
+        const team1Name = importMatchColumns.team1_name ? (m.team1_name || '') : '';
+        const team2Name = importMatchColumns.team2_name ? (m.team2_name || '') : '';
         if (!team1Name || !team2Name) { logs.push(`⚠️ 跳过比赛（队伍名称缺失）：第 ${idx + 1} 行`); continue; }
 
-        const t1id = teamNameToId[team1Name];
-        const t2id = teamNameToId[team2Name];
+        const normalizedTeam1Name = normalizeTeamName(team1Name);
+        const normalizedTeam2Name = normalizeTeamName(team2Name);
+        const resolvedTeam1Name = teamNameToId[team1Name] ? team1Name : (normalizedTeamNameToReal[normalizedTeam1Name] || team1Name);
+        const resolvedTeam2Name = teamNameToId[team2Name] ? team2Name : (normalizedTeamNameToReal[normalizedTeam2Name] || team2Name);
+        const t1id = teamNameToId[resolvedTeam1Name];
+        const t2id = teamNameToId[resolvedTeam2Name];
         if (!t1id || !t2id) { logs.push(`⚠️ 跳过比赛（队伍未找到）：${m.team1_name} vs ${m.team2_name}`); continue; }
+        if (resolvedTeam1Name !== team1Name || resolvedTeam2Name !== team2Name) {
+          logs.push(`🧩 比赛队伍名模糊匹配：${team1Name} vs ${team2Name} → ${resolvedTeam1Name} vs ${resolvedTeam2Name}`);
+        }
 
         // Use per-match tournament selection, fallback to "历史数据"
         let tournamentId = importMatchTournamentIds[idx] || '';
@@ -746,8 +871,8 @@ export default function Admin() {
         <h2 className="text-xl font-bold text-white mb-2">🤖 AI 批量导入战队数据</h2>
         <p className="text-slate-400 text-sm mb-4">
           请按以下格式准备 CSV/文本数据（支持粘贴或上传 <strong>.csv / .txt</strong> 文件）：<br />
-          <span className="font-mono text-emerald-400">战队名, 历史比分1, 历史比分2, 历史奖项1, 历史奖项2, ...</span><br />
-          <span className="text-slate-500">第1列必须为战队名；其余列可为历史比分（如 <code>2-1 vs TeamB</code>）或历史奖项（如 <code>2023年冠军</code>），AI 会自动识别。</span>
+          <span className="font-mono text-emerald-400">战队名, 是否甲级队伍, 积分, 积分排名, 历史比分1, 历史奖项1, 相关文章URL, ...</span><br />
+          <span className="text-slate-500">第1列必须为战队名；第2-4列建议依次为“是否甲级队伍 / 积分 / 积分排名”（若顺序不同，AI 会按列名/语义尽量识别）；其余列可为历史比分、奖项或 URL。若队名中英混排，系统会进行空格容错匹配并自动合并 URL 到队伍相关文章。若同时识别到积分与排名，会按 <code>积分:X; 排名:Y</code> 统一保存到“积分/积分排名”。</span>
         </p>
         <div className="space-y-3">
           <div className="flex gap-2 items-center">
@@ -795,11 +920,11 @@ export default function Admin() {
               <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
                 {([
                   ['name', '战队名'],
+                  ['is_top_tier', '强队（原是否甲级队伍）'],
+                  ['points_ranking', '积分/积分排名'],
                   ['region', '赛区'],
                   ['historical_records', '历史战绩'],
-                  ['description', '描述'],
-                  ['points_ranking', '积分排名'],
-                  ['is_top_tier', '是否甲级队伍']
+                  ['description', '描述']
                 ] as const).map(([key, label]) => (
                   <label key={key} className="flex items-center gap-2 text-slate-300">
                     <input
@@ -851,8 +976,8 @@ export default function Admin() {
                           <span className="text-emerald-400 font-semibold">{t.name}</span>
                           {t.region && <span className="text-slate-500 ml-2">[{t.region}]</span>}
                           {t.historical_records && <span className="text-slate-400 ml-2">— {t.historical_records}</span>}
-                          {t.points_ranking && <span className="text-blue-400 ml-2">积分排名: {t.points_ranking}</span>}
-                          <span className={`ml-2 ${t.is_top_tier ? 'text-amber-400' : 'text-slate-500'}`}>{t.is_top_tier ? '甲级队伍' : '非甲级/未知'}</span>
+                          <span className={`ml-2 ${t.is_top_tier ? 'text-amber-400' : 'text-slate-500'}`}>{t.is_top_tier ? '强队' : '普通/未知'}</span>
+                          {t.points_ranking && <span className="text-blue-400 ml-2">积分/积分排名: {t.points_ranking}</span>}
                         </div>
                       ))}
                     </div>
@@ -889,7 +1014,7 @@ export default function Admin() {
                 )}
                 {importPreview.skippedMatches && importPreview.skippedMatches.length > 0 && (
                   <div className="mt-3">
-                    <p className="text-amber-400 text-sm font-medium mb-1">以下比赛因“第一列战队名未与现有战队完全匹配”被过滤：</p>
+                    <p className="text-amber-400 text-sm font-medium mb-1">以下比赛未能匹配队伍名（已启用中英空格容错匹配）而被过滤：</p>
                     <div className="space-y-1">
                       {importPreview.skippedMatches.map((m, i) => (
                         <div key={i} className="text-xs text-amber-300 bg-slate-900 rounded px-2 py-1">
@@ -993,6 +1118,26 @@ export default function Admin() {
               <option value="">选择要编辑的赛事...</option>
               {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
+          </div>
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-slate-400 mb-1">批量删除赛事（多选）</label>
+            <select
+              multiple
+              value={batchDeleteTournamentIds}
+              onChange={e => setBatchDeleteTournamentIds(Array.from(e.target.selectedOptions, option => option.value))}
+              className="w-full min-h-28 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-red-500"
+            >
+              {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+            <p className="text-xs text-slate-500 mt-1">按住 Ctrl/Cmd 或 Shift 多选</p>
+            <button
+              type="button"
+              onClick={handleBatchDeleteTournaments}
+              disabled={batchDeleteTournamentIds.length === 0}
+              className="mt-2 w-full bg-red-900 hover:bg-red-800 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+            >
+              🗑 批量删除已选赛事（{batchDeleteTournamentIds.length}）
+            </button>
           </div>
           {editingTournamentId && (
             <form onSubmit={handleUpdateTournament} className="space-y-4">
@@ -1254,6 +1399,26 @@ export default function Admin() {
                 {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-slate-400 mb-1">批量删除队伍（多选）</label>
+              <select
+                multiple
+                value={batchDeleteTeamIds}
+                onChange={e => setBatchDeleteTeamIds(Array.from(e.target.selectedOptions, option => option.value))}
+                className="w-full min-h-28 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-red-500"
+              >
+                {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+              <p className="text-xs text-slate-500 mt-1">按住 Ctrl/Cmd 或 Shift 多选</p>
+              <button
+                type="button"
+                onClick={handleBatchDeleteTeams}
+                disabled={batchDeleteTeamIds.length === 0}
+                className="mt-2 w-full bg-red-900 hover:bg-red-800 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+              >
+                🗑 批量删除已选队伍（{batchDeleteTeamIds.length}）
+              </button>
+            </div>
             {editingTeamId && (
               <form onSubmit={handleUpdateTeam} className="space-y-4">
                 <div>
@@ -1458,6 +1623,30 @@ export default function Admin() {
               </option>
             ))}
           </select>
+        </div>
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-slate-400 mb-1">批量删除比赛（多选）</label>
+          <select
+            multiple
+            value={batchDeleteMatchIds}
+            onChange={e => setBatchDeleteMatchIds(Array.from(e.target.selectedOptions, option => option.value))}
+            className="w-full min-h-32 bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-red-500"
+          >
+            {allMatches.map(m => (
+              <option key={m.id} value={m.id}>
+                [{m.tournament_name}] {m.team1_name} {m.team1_score}-{m.team2_score} {m.team2_name} ({m.stage || ''}{m.group_name ? ` ${m.group_name}` : ''} R{m.round})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-slate-500 mt-1">按住 Ctrl/Cmd 或 Shift 多选</p>
+          <button
+            type="button"
+            onClick={handleBatchDeleteMatches}
+            disabled={batchDeleteMatchIds.length === 0}
+            className="mt-2 w-full bg-red-900 hover:bg-red-800 disabled:opacity-50 text-white font-medium py-2 px-4 rounded-lg transition-colors"
+          >
+            🗑 批量删除已选比赛（{batchDeleteMatchIds.length}）
+          </button>
         </div>
         {editingMatchId && (
           <form onSubmit={handleUpdateMatch} className="space-y-4">
