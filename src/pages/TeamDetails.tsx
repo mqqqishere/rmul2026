@@ -59,7 +59,7 @@ export default function TeamDetails() {
             </span>
             {(team.points || team.points_ranking) && (
               <span className="text-sm font-medium text-blue-300 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
-                积分: {team.points || '-'} / 排名: {team.points_ranking || '-'}
+                {[team.points ? `积分: ${team.points}` : '', team.points_ranking ? `排名: ${team.points_ranking}` : ''].filter(Boolean).join(' / ')}
               </span>
             )}
           </div>
