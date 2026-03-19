@@ -6,6 +6,8 @@ export interface Team {
   description: string;
   reference_links?: string;
   historical_records?: string;
+  points_ranking?: string;
+  is_top_tier?: boolean;
 }
 
 export interface TournamentStage {

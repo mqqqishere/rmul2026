@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { format } from 'date-fns';
-import { Team, Match } from '../types';
+import { Team, Match, Tournament } from '../types';
 import { GitCompare, Trophy, Sparkles, FileText, X } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
@@ -10,6 +10,9 @@ export default function CompareTeams() {
   const [team1Id, setTeam1Id] = useState<string>('');
   const [team2Id, setTeam2Id] = useState<string>('');
   const [matches, setMatches] = useState<Match[]>([]);
+  const [tournaments, setTournaments] = useState<Tournament[]>([]);
+  const [currentTournamentId, setCurrentTournamentId] = useState<string>('');
+  const [customPrompt, setCustomPrompt] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [prediction, setPrediction] = useState<string | null>(null);
   const [loadingPrediction, setLoadingPrediction] = useState(false);
@@ -20,6 +23,9 @@ export default function CompareTeams() {
     fetch('/api/teams')
       .then(res => res.json())
       .then(data => setTeams(data));
+    fetch('/api/tournaments')
+      .then(res => res.json())
+      .then(data => setTournaments(data));
   }, []);
 
   useEffect(() => {
@@ -48,6 +54,9 @@ export default function CompareTeams() {
       ]);
       const team1Data = team1Res.ok ? await team1Res.json() : teams.find(t => t.id.toString() === team1Id);
       const team2Data = team2Res.ok ? await team2Res.json() : teams.find(t => t.id.toString() === team2Id);
+      const currentTournamentMatches = currentTournamentId
+        ? await fetch(`/api/matches/compare/${team1Id}/${team2Id}/current/${currentTournamentId}`).then(res => res.ok ? res.json() : [])
+        : [];
 
       const response = await fetch('/api/ai/predict', {
         method: 'POST',
@@ -67,7 +76,9 @@ export default function CompareTeams() {
             description: team2Data?.description || '',
             region: team2Data?.region || ''
           },
-          historicalMatches: matches
+          historicalMatches: matches,
+          currentTournamentMatches,
+          customPrompt
         }),
       });
       
@@ -178,6 +189,25 @@ export default function CompareTeams() {
         {team1 && team2 && (
           <div className="mt-12 pt-8 border-t border-slate-800">
             <h3 className="text-center text-slate-400 font-medium mb-6 uppercase tracking-widest text-sm">历史交锋战绩</h3>
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <select
+                value={currentTournamentId}
+                onChange={e => setCurrentTournamentId(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 text-sm"
+              >
+                <option value="">当前比赛：不指定（仅用历史）</option>
+                {tournaments.map(t => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              <input
+                type="text"
+                value={customPrompt}
+                onChange={e => setCustomPrompt(e.target.value)}
+                placeholder="可选：自定义提示词（如提高近3场权重）"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-emerald-500 text-sm"
+              />
+            </div>
             <div className="flex items-center justify-center gap-8 md:gap-24">
               <div className="text-center">
                 <div className="text-5xl font-black text-emerald-400">{team1Wins}</div>

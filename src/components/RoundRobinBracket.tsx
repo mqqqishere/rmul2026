@@ -7,77 +7,105 @@ import ReactMarkdown from 'react-markdown';
 interface RoundRobinBracketProps {
   matches: Match[];
   teams: Team[];
+  stageGroups?: Record<string, number[]> | null;
 }
 
-export default function RoundRobinBracket({ matches, teams }: RoundRobinBracketProps) {
+const calculateBo2Points = (myScore: number, oppScore: number) => {
+  if (myScore === 2 && oppScore === 0) return 3;
+  if (myScore === 1 && oppScore === 1) return 1;
+  if (myScore === 1 && oppScore === 0) return 1;
+  return 0;
+};
+
+export default function RoundRobinBracket({ matches, teams, stageGroups = null }: RoundRobinBracketProps) {
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [reportTab, setReportTab] = useState<'ai' | 'raw'>('ai');
 
-  // Calculate standings
-  const standings = teams.map(team => {
+  const teamById = new Map(teams.map(team => [team.id, team]));
+  const groupEntries = stageGroups && Object.keys(stageGroups).length > 0
+    ? Object.entries(stageGroups).map(([groupName, ids]) => ({
+        groupName,
+        teamList: (ids || []).map(id => teamById.get(id)).filter(Boolean) as Team[]
+      }))
+    : [{ groupName: '全部队伍', teamList: teams }];
+
+  const calculateStandings = (groupTeamList: Team[]) => {
+    const groupTeamIds = new Set(groupTeamList.map(t => t.id));
+    return groupTeamList.map(team => {
     let wins = 0;
     let losses = 0;
     let points = 0;
+    let netWins = 0;
 
     matches.forEach(match => {
       if (match.status !== 'Completed') return;
+      if (!groupTeamIds.has(match.team1_id) || !groupTeamIds.has(match.team2_id)) return;
       
       if (match.team1_id === team.id) {
-        if (match.team1_score > match.team2_score) { wins++; points += 3; }
-        else if (match.team1_score < match.team2_score) { losses++; }
-        else { points += 1; } // Draw
+        if (match.team1_score > match.team2_score) wins++;
+        else if (match.team1_score < match.team2_score) losses++;
+        points += calculateBo2Points(match.team1_score, match.team2_score);
+        netWins += (match.team1_score - match.team2_score);
       } else if (match.team2_id === team.id) {
-        if (match.team2_score > match.team1_score) { wins++; points += 3; }
-        else if (match.team2_score < match.team1_score) { losses++; }
-        else { points += 1; } // Draw
+        if (match.team2_score > match.team1_score) wins++;
+        else if (match.team2_score < match.team1_score) losses++;
+        points += calculateBo2Points(match.team2_score, match.team1_score);
+        netWins += (match.team2_score - match.team1_score);
       }
     });
 
-    return { ...team, wins, losses, points };
-  }).sort((a, b) => b.points - a.points || b.wins - a.wins);
+    return { ...team, wins, losses, points, netWins };
+  }).sort((a, b) => b.points - a.points || b.netWins - a.netWins || b.wins - a.wins);
+  };
 
   return (
     <>
       <div className="space-y-8">
-        {/* Standings Table */}
-        <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-          <div className="bg-slate-800/50 px-6 py-4 border-b border-slate-800">
-            <h3 className="font-semibold text-slate-200">小组积分榜</h3>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm text-slate-400">
-              <thead className="text-xs uppercase bg-slate-950/50 text-slate-500 border-b border-slate-800">
-                <tr>
-                  <th className="px-6 py-3 font-medium">排名</th>
-                  <th className="px-6 py-3 font-medium">队伍</th>
-                  <th className="px-6 py-3 font-medium text-center">胜</th>
-                  <th className="px-6 py-3 font-medium text-center">负</th>
-                  <th className="px-6 py-3 font-medium text-center">积分</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800/50">
-                {standings.map((team, index) => (
-                  <tr key={team.id} className="hover:bg-slate-800/20 transition-colors">
-                    <td className="px-6 py-4 font-mono text-slate-500">{index + 1}</td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        {team.logo_url ? (
-                          <img src={team.logo_url} alt={team.name} className="w-6 h-6 rounded-full object-cover bg-slate-800" />
-                        ) : (
-                          <div className="w-6 h-6 rounded-full bg-slate-800" />
-                        )}
-                        <span className="font-medium text-slate-200">{team.name}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-center text-emerald-400 font-medium">{team.wins}</td>
-                    <td className="px-6 py-4 text-center text-red-400 font-medium">{team.losses}</td>
-                    <td className="px-6 py-4 text-center text-blue-400 font-bold">{team.points}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        {groupEntries.map(({ groupName, teamList }) => {
+          const standings = calculateStandings(teamList);
+          return (
+            <div key={groupName} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+              <div className="bg-slate-800/50 px-6 py-4 border-b border-slate-800">
+                <h3 className="font-semibold text-slate-200">小组积分榜 - {groupName}</h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-slate-400">
+                  <thead className="text-xs uppercase bg-slate-950/50 text-slate-500 border-b border-slate-800">
+                    <tr>
+                      <th className="px-6 py-3 font-medium">排名</th>
+                      <th className="px-6 py-3 font-medium">队伍</th>
+                      <th className="px-6 py-3 font-medium text-center">胜</th>
+                      <th className="px-6 py-3 font-medium text-center">负</th>
+                      <th className="px-6 py-3 font-medium text-center">净胜局</th>
+                      <th className="px-6 py-3 font-medium text-center">积分</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/50">
+                    {standings.map((team, index) => (
+                      <tr key={team.id} className="hover:bg-slate-800/20 transition-colors">
+                        <td className="px-6 py-4 font-mono text-slate-500">{index + 1}</td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-3">
+                            {team.logo_url ? (
+                              <img src={team.logo_url} alt={team.name} className="w-6 h-6 rounded-full object-cover bg-slate-800" />
+                            ) : (
+                              <div className="w-6 h-6 rounded-full bg-slate-800" />
+                            )}
+                            <span className="font-medium text-slate-200">{team.name}</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 text-center text-emerald-400 font-medium">{team.wins}</td>
+                        <td className="px-6 py-4 text-center text-red-400 font-medium">{team.losses}</td>
+                        <td className="px-6 py-4 text-center text-slate-300 font-medium">{team.netWins}</td>
+                        <td className="px-6 py-4 text-center text-blue-400 font-bold">{team.points}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          );
+        })}
 
         {/* Matches List */}
         <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">

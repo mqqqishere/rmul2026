@@ -55,7 +55,8 @@ export default function TournamentDetails() {
   };
 
   const currentStageMatches = selectedStage ? stages[selectedStage] || [] : [];
-  const currentStageFormat = tournament.stages?.find(s => s.name === selectedStage)?.format || 'Swiss';
+  const currentStageInfo = tournament.stages?.find(s => s.name === selectedStage);
+  const currentStageFormat = currentStageInfo?.format || 'Swiss';
 
   return (
     <div className="space-y-12">
@@ -185,7 +186,11 @@ export default function TournamentDetails() {
               currentStageFormat.toLowerCase().includes('swiss') || currentStageFormat.toLowerCase().includes('瑞士') ? (
                 <SwissBracket matches={currentStageMatches} />
               ) : currentStageFormat.toLowerCase().includes('group') || currentStageFormat.toLowerCase().includes('round robin') || currentStageFormat.toLowerCase().includes('小组') || currentStageFormat.toLowerCase().includes('循环') ? (
-                <RoundRobinBracket matches={currentStageMatches} teams={tournament.teams || []} />
+                <RoundRobinBracket
+                  matches={currentStageMatches}
+                  teams={tournament.teams || []}
+                  stageGroups={currentStageInfo?.stage_groups || null}
+                />
               ) : (
                 <SwissBracket matches={currentStageMatches} /> // Fallback
               )

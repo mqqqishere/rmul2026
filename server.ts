@@ -51,9 +51,13 @@ async function initDb() {
         region TEXT,
         description TEXT,
         reference_links TEXT,
-        historical_records TEXT
+        historical_records TEXT,
+        points_ranking TEXT,
+        is_top_tier BOOLEAN DEFAULT FALSE
       );
     `;
+    await sql`ALTER TABLE teams ADD COLUMN IF NOT EXISTS points_ranking TEXT;`;
+    await sql`ALTER TABLE teams ADD COLUMN IF NOT EXISTS is_top_tier BOOLEAN DEFAULT FALSE;`;
     await sql`
       CREATE TABLE IF NOT EXISTS tournament_teams (
         tournament_id INTEGER,
@@ -219,11 +223,23 @@ app.post('/api/ai/test', async (req, res) => {
 
 app.post('/api/ai/predict', async (req, res) => {
   try {
-    const { team1Name, team2Name, team1Details, team2Details, historicalMatches } = req.body;
+    const { team1Name, team2Name, team1Details, team2Details, historicalMatches, currentTournamentMatches, customPrompt } = req.body;
     const history = {
       team1: { name: team1Name, ...(team1Details || {}) },
       team2: { name: team2Name, ...(team2Details || {}) },
-      matches: (historicalMatches || []).map((m: any) => ({
+      current_tournament_matches: (currentTournamentMatches || []).map((m: any) => ({
+        tournament: m.tournament_name,
+        stage: m.stage,
+        round: m.round,
+        date: m.match_date,
+        team1: m.team1_name,
+        score: `${m.team1_score}-${m.team2_score}`,
+        team2: m.team2_name,
+        status: m.status,
+        ai_summary: m.report || null,
+        raw_details: m.raw_report || null
+      })),
+      historical_matches: (historicalMatches || []).map((m: any) => ({
         tournament: m.tournament_name,
         stage: m.stage,
         round: m.round,
@@ -236,7 +252,15 @@ app.post('/api/ai/predict', async (req, res) => {
         raw_details: m.raw_report || null
       }))
     };
-    const prompt = `请根据以下两支队伍（${team1Name} vs ${team2Name}）的历史交锋记录和近期战绩，生成一份专业的中文赛前预测报告，要求完全依据历史数据内容，若无充分数据支持，请只列举对战数据及总结之前对战的详细报告，按两队伍各自历史成绩，交手记录，详细报告分析三个环节输出：\n\n历史数据：\n${JSON.stringify(history)}`;
+    const prompt = `请根据以下两支队伍（${team1Name} vs ${team2Name}）的数据生成中文赛前预测报告，并严格遵循：
+1) 优先参考“当前比赛过往比分数据”（current_tournament_matches）。
+2) 若当前比赛数据不足，再参考“历史数据”（historical_matches）。
+3) 输出结构包含：两队近期状态、交手记录、关键胜负手、结论。
+4) 必须基于给定数据，不得虚构。
+${customPrompt ? `5) 额外用户提示词（需尽量遵循）：${customPrompt}` : ''}
+
+数据：
+${JSON.stringify(history)}`;
     const prediction = await generateAIContent(prompt);
     res.json({ prediction });
   } catch (error: any) {
@@ -263,7 +287,9 @@ ${tableData}
       "name": "战队名称",
       "region": "赛区（如能识别，否则留空）",
       "historical_records": "所有历史奖项和战绩的汇总文字",
-      "description": "简短描述（可选）"
+      "description": "简短描述（可选）",
+      "points_ranking": "积分排名（如能识别，否则留空）",
+      "is_top_tier": true
     }
   ],
   "matches": [
@@ -280,9 +306,11 @@ ${tableData}
 
 注意：
 - 每行数据对应一支战队
+- 第一列必须为战队名称
 - 如果比分格式为"2-1"，team1_score=2, team2_score=1
 - 如果没有明确的对战比赛数据，matches数组返回空数组[]
 - historical_records字段应整合该战队所有的历史信息（奖项、比分等）
+- points_ranking 为字符串，可为空；is_top_tier 为布尔值，无法判断时默认 false
 - 只返回纯JSON，不要markdown代码块`;
     const result = await generateAIContent(prompt);
     if (!result || !result.trim()) {
@@ -295,7 +323,28 @@ ${tableData}
     } catch {
       return res.status(500).json({ error: 'AI 返回的数据格式无效，请重试', raw: result });
     }
-    res.json(parsed);
+    const normalized = {
+      teams: Array.isArray(parsed?.teams) ? parsed.teams : [],
+      matches: Array.isArray(parsed?.matches) ? parsed.matches : []
+    };
+
+    const { rows: existingTeams } = await sql`SELECT name FROM teams`;
+    const existingTeamNames = new Set(existingTeams.map((t: any) => t.name));
+    const skippedMatches: any[] = [];
+    const filteredMatches = normalized.matches.filter((m: any) => {
+      const team1Name = (m?.team1_name || '').toString();
+      if (!team1Name || !existingTeamNames.has(team1Name)) {
+        skippedMatches.push(m);
+        return false;
+      }
+      return true;
+    });
+
+    res.json({
+      teams: normalized.teams,
+      matches: filteredMatches,
+      skipped_matches: skippedMatches
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message || 'AI 导入解析失败' });
   }
@@ -472,10 +521,12 @@ app.get('/api/teams/:id', async (req, res) => {
 });
 
 app.post('/api/teams', async (req, res) => {
-  const { name, logo_url, region, description, reference_links, historical_records } = req.body;
+  const { name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier } = req.body;
   try {
     const result = await sql`
-      INSERT INTO teams (name, logo_url, region, description, reference_links, historical_records) VALUES (${name}, ${logo_url}, ${region}, ${description}, ${reference_links}, ${historical_records}) RETURNING id
+      INSERT INTO teams (name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier)
+      VALUES (${name}, ${logo_url}, ${region}, ${description}, ${reference_links}, ${historical_records}, ${points_ranking || ''}, ${Boolean(is_top_tier)})
+      RETURNING id
     `;
     res.json({ id: result.rows[0].id });
   } catch (error: any) {
@@ -484,10 +535,21 @@ app.post('/api/teams', async (req, res) => {
 });
 
 app.put('/api/teams/:id', async (req, res) => {
-  const { name, logo_url, region, description, reference_links, historical_records } = req.body;
+  const { name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier } = req.body;
+  const nextTopTier = typeof is_top_tier === 'boolean' ? is_top_tier : null;
+  const nextPointsRanking = typeof points_ranking === 'string' ? points_ranking : null;
   try {
     await sql`
-      UPDATE teams SET name = ${name}, logo_url = ${logo_url}, region = ${region}, description = ${description}, reference_links = ${reference_links}, historical_records = ${historical_records} WHERE id = ${req.params.id}
+      UPDATE teams
+      SET name = ${name},
+          logo_url = ${logo_url},
+          region = ${region},
+          description = ${description},
+          reference_links = ${reference_links},
+          historical_records = ${historical_records},
+          points_ranking = COALESCE(${nextPointsRanking}, points_ranking),
+          is_top_tier = COALESCE(${nextTopTier}, is_top_tier)
+      WHERE id = ${req.params.id}
     `;
     res.json({ success: true });
   } catch (error: any) {
@@ -550,6 +612,25 @@ app.get('/api/matches/compare/:team1/:team2', async (req, res) => {
       LEFT JOIN teams t2 ON m.team2_id = t2.id
       JOIN tournaments tr ON m.tournament_id = tr.id
       WHERE (m.team1_id = ${team1} AND m.team2_id = ${team2}) OR (m.team1_id = ${team2} AND m.team2_id = ${team1})
+      ORDER BY m.match_date DESC
+    `;
+    res.json(matches);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/matches/compare/:team1/:team2/current/:tournamentId', async (req, res) => {
+  const { team1, team2, tournamentId } = req.params;
+  try {
+    const { rows: matches } = await sql`
+      SELECT m.*, t1.name as team1_name, t1.logo_url as team1_logo, t2.name as team2_name, t2.logo_url as team2_logo, tr.name as tournament_name
+      FROM matches m
+      LEFT JOIN teams t1 ON m.team1_id = t1.id
+      LEFT JOIN teams t2 ON m.team2_id = t2.id
+      JOIN tournaments tr ON m.tournament_id = tr.id
+      WHERE m.tournament_id = ${tournamentId}
+        AND ((m.team1_id = ${team1} AND m.team2_id = ${team2}) OR (m.team1_id = ${team2} AND m.team2_id = ${team1}))
       ORDER BY m.match_date DESC
     `;
     res.json(matches);
