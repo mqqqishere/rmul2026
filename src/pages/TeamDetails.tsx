@@ -54,6 +54,14 @@ export default function TeamDetails() {
             <span className="flex items-center gap-1.5 text-sm font-medium text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
               <Globe className="w-4 h-4" /> {team.region}
             </span>
+            <span className={`text-sm font-medium px-3 py-1 rounded-full border ${team.is_top_tier ? 'text-amber-300 bg-amber-500/10 border-amber-500/20' : 'text-slate-300 bg-slate-700/20 border-slate-600/40'}`}>
+              {team.is_top_tier ? '强队' : '普通/未知'}
+            </span>
+            {(team.points || team.points_ranking) && (
+              <span className="text-sm font-medium text-blue-300 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+                {[team.points ? `积分: ${team.points}` : '', team.points_ranking ? `排名: ${team.points_ranking}` : ''].filter(Boolean).join(' / ')}
+              </span>
+            )}
           </div>
 
           <div>
