@@ -222,8 +222,24 @@ export default function Admin() {
 
   // AI Import state
   const [importText, setImportText] = useState('');
-  const [importPreview, setImportPreview] = useState<{ teams: any[]; matches: any[] } | null>(null);
+  const [importPreview, setImportPreview] = useState<{ teams: any[]; matches: any[]; skippedMatches?: any[] } | null>(null);
   const [importMatchTournamentIds, setImportMatchTournamentIds] = useState<string[]>([]);
+  const [importTeamColumns, setImportTeamColumns] = useState({
+    name: true,
+    region: true,
+    historical_records: true,
+    description: true,
+    points_ranking: true,
+    is_top_tier: true
+  });
+  const [importMatchColumns, setImportMatchColumns] = useState({
+    team1_name: true,
+    team2_name: true,
+    team1_score: true,
+    team2_score: true,
+    stage: true,
+    notes: true
+  });
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [isConfirmingImport, setIsConfirmingImport] = useState(false);
   const [importLog, setImportLog] = useState<string[]>([]);
@@ -276,13 +292,21 @@ export default function Admin() {
       }
       const data = await res.json();
       const matches = data.matches || [];
-      setImportPreview({ teams: data.teams || [], matches });
+      setImportPreview({ teams: data.teams || [], matches, skippedMatches: data.skipped_matches || [] });
       setImportMatchTournamentIds(matches.map(() => ''));
     } catch (err: any) {
       alert(`请求失败: ${err.message}`);
     } finally {
       setIsParsingImport(false);
     }
+  };
+
+  const toggleImportTeamColumn = (key: keyof typeof importTeamColumns) => {
+    setImportTeamColumns(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleImportMatchColumn = (key: keyof typeof importMatchColumns) => {
+    setImportMatchColumns(prev => ({ ...prev, [key]: !prev[key] }));
   };
 
   const handleConfirmImport = async () => {
@@ -297,24 +321,39 @@ export default function Admin() {
       const teamsRes = await fetch('/api/teams');
       if (teamsRes.ok) existingTeams = await teamsRes.json();
     } catch { /* use empty list */ }
-    existingTeams.forEach(t => { teamNameToId[t.name] = t.id.toString(); });
+    const existingTeamMap: Record<string, Team> = {};
+    existingTeams.forEach(t => {
+      teamNameToId[t.name] = t.id.toString();
+      existingTeamMap[t.name] = t;
+    });
 
     // Create teams
     for (const t of importPreview.teams) {
-      if (!t.name) continue;
+      if (!importTeamColumns.name || !t.name) continue;
+      const existing = existingTeamMap[t.name];
+      const payload = {
+        name: t.name,
+        logo_url: existing?.logo_url || '',
+        region: importTeamColumns.region ? (t.region || '') : (existing?.region || ''),
+        description: importTeamColumns.description ? (t.description || '') : (existing?.description || ''),
+        reference_links: existing?.reference_links || '',
+        historical_records: importTeamColumns.historical_records ? (t.historical_records || '') : (existing?.historical_records || ''),
+        points_ranking: importTeamColumns.points_ranking ? (t.points_ranking || '') : (existing?.points_ranking || ''),
+        is_top_tier: importTeamColumns.is_top_tier ? Boolean(t.is_top_tier) : Boolean(existing?.is_top_tier)
+      };
       if (teamNameToId[t.name]) {
         // Update existing team's historical_records
         await fetch(`/api/teams/${teamNameToId[t.name]}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: t.name, logo_url: '', region: t.region || '', description: t.description || '', reference_links: '', historical_records: t.historical_records || '' })
+          body: JSON.stringify(payload)
         });
         logs.push(`✏️ 更新队伍：${t.name}`);
       } else {
         const res = await fetch('/api/teams', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: t.name, logo_url: '', region: t.region || '', description: t.description || '', reference_links: '', historical_records: t.historical_records || '' })
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         teamNameToId[t.name] = data.id?.toString() || '';
@@ -340,8 +379,12 @@ export default function Admin() {
 
       for (let idx = 0; idx < importPreview.matches.length; idx++) {
         const m = importPreview.matches[idx];
-        const t1id = teamNameToId[m.team1_name];
-        const t2id = teamNameToId[m.team2_name];
+        const team1Name = importMatchColumns.team1_name ? m.team1_name : '';
+        const team2Name = importMatchColumns.team2_name ? m.team2_name : '';
+        if (!team1Name || !team2Name) { logs.push(`⚠️ 跳过比赛（队伍名称缺失）：第 ${idx + 1} 行`); continue; }
+
+        const t1id = teamNameToId[team1Name];
+        const t2id = teamNameToId[team2Name];
         if (!t1id || !t2id) { logs.push(`⚠️ 跳过比赛（队伍未找到）：${m.team1_name} vs ${m.team2_name}`); continue; }
 
         // Use per-match tournament selection, fallback to "历史数据"
@@ -363,7 +406,19 @@ export default function Admin() {
         await fetch('/api/matches', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tournament_id: tournamentId, stage: m.stage || '历史记录', round: 1, team1_id: t1id, team2_id: t2id, team1_score: m.team1_score || 0, team2_score: m.team2_score || 0, status: 'Completed', match_date: new Date().toISOString(), report: m.notes || '', raw_report: m.notes || '' })
+          body: JSON.stringify({
+            tournament_id: tournamentId,
+            stage: importMatchColumns.stage ? (m.stage || '历史记录') : '历史记录',
+            round: 1,
+            team1_id: t1id,
+            team2_id: t2id,
+            team1_score: importMatchColumns.team1_score ? (m.team1_score || 0) : 0,
+            team2_score: importMatchColumns.team2_score ? (m.team2_score || 0) : 0,
+            status: 'Completed',
+            match_date: new Date().toISOString(),
+            report: importMatchColumns.notes ? (m.notes || '') : '',
+            raw_report: importMatchColumns.notes ? (m.notes || '') : ''
+          })
         });
         const selectedTour = allTournaments.find(t => t.id.toString() === tournamentId);
         logs.push(`✅ 创建比赛：${m.team1_name} ${m.team1_score}-${m.team2_score} ${m.team2_name}（赛事：${selectedTour?.name || tournamentId}）`);
@@ -734,6 +789,55 @@ export default function Admin() {
             )}
           </div>
 
+          <div className="bg-slate-950 border border-slate-700 rounded-lg p-3 space-y-3">
+            <div>
+              <p className="text-slate-300 text-sm font-medium mb-2">队伍字段导入选择（默认全选）</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                {([
+                  ['name', '战队名'],
+                  ['region', '赛区'],
+                  ['historical_records', '历史战绩'],
+                  ['description', '描述'],
+                  ['points_ranking', '积分排名'],
+                  ['is_top_tier', '是否甲级队伍']
+                ] as const).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={importTeamColumns[key]}
+                      onChange={() => toggleImportTeamColumn(key)}
+                      className="accent-emerald-500"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div>
+              <p className="text-slate-300 text-sm font-medium mb-2">比赛字段导入选择（默认全选）</p>
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-sm">
+                {([
+                  ['team1_name', '战队1'],
+                  ['team2_name', '战队2'],
+                  ['team1_score', '战队1比分'],
+                  ['team2_score', '战队2比分'],
+                  ['stage', '赛段'],
+                  ['notes', '备注']
+                ] as const).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={importMatchColumns[key]}
+                      onChange={() => toggleImportMatchColumn(key)}
+                      className="accent-emerald-500"
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {importPreview && (
             <div className="mt-4 space-y-4">
               <div className="bg-slate-950 border border-slate-700 rounded-lg p-4">
@@ -747,6 +851,8 @@ export default function Admin() {
                           <span className="text-emerald-400 font-semibold">{t.name}</span>
                           {t.region && <span className="text-slate-500 ml-2">[{t.region}]</span>}
                           {t.historical_records && <span className="text-slate-400 ml-2">— {t.historical_records}</span>}
+                          {t.points_ranking && <span className="text-blue-400 ml-2">积分排名: {t.points_ranking}</span>}
+                          <span className={`ml-2 ${t.is_top_tier ? 'text-amber-400' : 'text-slate-500'}`}>{t.is_top_tier ? '甲级队伍' : '非甲级/未知'}</span>
                         </div>
                       ))}
                     </div>
@@ -776,6 +882,18 @@ export default function Admin() {
                             <option value="">自动（导入至"历史数据"）</option>
                             {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                           </select>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {importPreview.skippedMatches && importPreview.skippedMatches.length > 0 && (
+                  <div className="mt-3">
+                    <p className="text-amber-400 text-sm font-medium mb-1">以下比赛因“第一列战队名未与现有战队完全匹配”被过滤：</p>
+                    <div className="space-y-1">
+                      {importPreview.skippedMatches.map((m, i) => (
+                        <div key={i} className="text-xs text-amber-300 bg-slate-900 rounded px-2 py-1">
+                          {m.team1_name || '未知'} vs {m.team2_name || '未知'}
                         </div>
                       ))}
                     </div>
