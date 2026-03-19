@@ -58,7 +58,7 @@ export default function Admin() {
   
   // Forms state
   const [newTournament, setNewTournament] = useState({ name: '', game: '', start_date: new Date(), end_date: new Date(), prize_pool: '', status: 'Upcoming', description: '', format: 'Swiss' });
-  const [newTeam, setNewTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '' });
+  const [newTeam, setNewTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
   
   // Add team to tournament state
   const [selectedTournamentId, setSelectedTournamentId] = useState('');
@@ -66,7 +66,7 @@ export default function Admin() {
 
   // Edit team state
   const [editingTeamId, setEditingTeamId] = useState('');
-  const [editTeam, setEditTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+  const [editTeam, setEditTeam] = useState({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
   const [batchDeleteTournamentIds, setBatchDeleteTournamentIds] = useState<string[]>([]);
   const [batchDeleteTeamIds, setBatchDeleteTeamIds] = useState<string[]>([]);
   const [batchDeleteMatchIds, setBatchDeleteMatchIds] = useState<string[]>([]);
@@ -83,11 +83,14 @@ export default function Admin() {
           region: team.region || '',
           description: team.description || '',
           reference_links: team.reference_links || '',
-          historical_records: team.historical_records || ''
+          historical_records: team.historical_records || '',
+          points: team.points || '',
+          points_ranking: team.points_ranking || '',
+          is_top_tier: Boolean(team.is_top_tier)
         });
       }
     } else {
-      setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+      setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
     }
   };
 
@@ -101,7 +104,7 @@ export default function Admin() {
     });
     alert('队伍已更新！');
     setEditingTeamId('');
-    setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+    setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
     fetchData();
   };
 
@@ -183,7 +186,7 @@ export default function Admin() {
     await fetch(`/api/teams/${editingTeamId}`, { method: 'DELETE' });
     alert('队伍已删除！');
     setEditingTeamId('');
-    setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+    setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
     fetchData();
   };
 
@@ -198,7 +201,7 @@ export default function Admin() {
     alert(`批量删除队伍完成：成功 ${successCount}${failedCount > 0 ? `，失败 ${failedCount}` : ''}`);
     if (editingTeamId && batchDeleteTeamIds.includes(editingTeamId)) {
       setEditingTeamId('');
-      setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '' });
+      setEditTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
     }
     setBatchDeleteTeamIds([]);
     fetchData();
@@ -438,9 +441,6 @@ export default function Admin() {
       const mergedReferenceLinks = appendUniqueLinks(existing?.reference_links || '', importUrls);
       const pointsRaw = (t.points || '').toString().trim();
       const rankingRaw = (t.points_ranking || '').toString().trim();
-      const mergedPointsRanking = pointsRaw && rankingRaw
-        ? `积分:${pointsRaw}; 排名:${rankingRaw}`
-        : (rankingRaw || pointsRaw);
       if (importUrls.length > 0) {
         logs.push(`🔗 识别到 ${importUrls.length} 个链接并合并至队伍相关文章：${matchedName}`);
       }
@@ -454,7 +454,8 @@ export default function Admin() {
         description: importTeamColumns.description ? (t.description || '') : (existing?.description || ''),
         reference_links: mergedReferenceLinks,
         historical_records: importTeamColumns.historical_records ? (t.historical_records || '') : (existing?.historical_records || ''),
-        points_ranking: importTeamColumns.points_ranking ? mergedPointsRanking : (existing?.points_ranking || ''),
+        points: importTeamColumns.points_ranking ? pointsRaw : (existing?.points || ''),
+        points_ranking: importTeamColumns.points_ranking ? rankingRaw : (existing?.points_ranking || ''),
         is_top_tier: importTeamColumns.is_top_tier ? Boolean(t.is_top_tier) : Boolean(existing?.is_top_tier)
       };
       if (teamNameToId[matchedName]) {
@@ -618,7 +619,7 @@ export default function Admin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(newTeam)
     });
-    setNewTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '' });
+    setNewTeam({ name: '', logo_url: '', region: '', description: '', reference_links: '', historical_records: '', points: '', points_ranking: '', is_top_tier: false });
     fetchData();
   };
 
@@ -1381,7 +1382,23 @@ export default function Admin() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">历史战绩</label>
-                <textarea value={(newTeam as any).historical_records || ''} onChange={e => setNewTeam({...newTeam, historical_records: e.target.value} as any)} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="例如：2023年全球总决赛冠军"></textarea>
+                <textarea value={newTeam.historical_records} onChange={e => setNewTeam({...newTeam, historical_records: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="例如：2023年全球总决赛冠军"></textarea>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">积分</label>
+                  <input type="text" value={newTeam.points} onChange={e => setNewTeam({...newTeam, points: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" placeholder="例如：1750" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-400 mb-1">积分排名</label>
+                  <input type="text" value={newTeam.points_ranking} onChange={e => setNewTeam({...newTeam, points_ranking: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" placeholder="例如：12" />
+                </div>
+              </div>
+              <div>
+                <label className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                  <input type="checkbox" checked={newTeam.is_top_tier} onChange={e => setNewTeam({...newTeam, is_top_tier: e.target.checked})} className="accent-emerald-500" />
+                  强队（原是否甲级队伍）
+                </label>
               </div>
               <button type="submit" className="w-full bg-emerald-500 hover:bg-emerald-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
                 创建队伍
@@ -1446,6 +1463,22 @@ export default function Admin() {
                 <div>
                   <label className="block text-sm font-medium text-slate-400 mb-1">历史战绩</label>
                   <textarea value={editTeam.historical_records} onChange={e => setEditTeam({...editTeam, historical_records: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" rows={3} placeholder="例如：2023年全球总决赛冠军"></textarea>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-1">积分</label>
+                    <input type="text" value={editTeam.points} onChange={e => setEditTeam({...editTeam, points: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" placeholder="例如：1750" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-1">积分排名</label>
+                    <input type="text" value={editTeam.points_ranking} onChange={e => setEditTeam({...editTeam, points_ranking: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" placeholder="例如：12" />
+                  </div>
+                </div>
+                <div>
+                  <label className="flex items-center gap-2 text-sm font-medium text-slate-300">
+                    <input type="checkbox" checked={editTeam.is_top_tier} onChange={e => setEditTeam({...editTeam, is_top_tier: e.target.checked})} className="accent-emerald-500" />
+                    强队（原是否甲级队伍）
+                  </label>
                 </div>
                 <button type="submit" className="w-full bg-blue-500 hover:bg-blue-600 text-white font-medium py-2 px-4 rounded-lg transition-colors">
                   更新队伍

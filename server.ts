@@ -61,10 +61,12 @@ async function initDb() {
         description TEXT,
         reference_links TEXT,
         historical_records TEXT,
+        points TEXT,
         points_ranking TEXT,
         is_top_tier BOOLEAN DEFAULT FALSE
       );
     `;
+    await sql`ALTER TABLE teams ADD COLUMN IF NOT EXISTS points TEXT;`;
     await sql`ALTER TABLE teams ADD COLUMN IF NOT EXISTS points_ranking TEXT;`;
     await sql`ALTER TABLE teams ADD COLUMN IF NOT EXISTS is_top_tier BOOLEAN DEFAULT FALSE;`;
     await sql`
@@ -383,7 +385,7 @@ app.get('/api/tournaments', async (req, res) => {
     const { rows: tournaments } = await sql`SELECT * FROM tournaments ORDER BY start_date DESC`;
     const { rows: stages } = await sql`SELECT * FROM tournament_stages`;
     const { rows: tournamentTeams } = await sql`
-      SELECT tt.tournament_id, t.id, t.name, t.logo_url, t.region, t.description, t.reference_links, t.historical_records
+      SELECT tt.tournament_id, t.id, t.name, t.logo_url, t.region, t.description, t.reference_links, t.historical_records, t.points, t.points_ranking, t.is_top_tier
       FROM tournament_teams tt
       JOIN teams t ON t.id = tt.team_id
       ORDER BY t.name ASC
@@ -548,11 +550,11 @@ app.get('/api/teams/:id', async (req, res) => {
 });
 
 app.post('/api/teams', async (req, res) => {
-  const { name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier } = req.body;
+  const { name, logo_url, region, description, reference_links, historical_records, points, points_ranking, is_top_tier } = req.body;
   try {
     const result = await sql`
-      INSERT INTO teams (name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier)
-      VALUES (${name}, ${logo_url}, ${region}, ${description}, ${reference_links}, ${historical_records}, ${points_ranking || ''}, ${Boolean(is_top_tier)})
+      INSERT INTO teams (name, logo_url, region, description, reference_links, historical_records, points, points_ranking, is_top_tier)
+      VALUES (${name}, ${logo_url}, ${region}, ${description}, ${reference_links}, ${historical_records}, ${points || ''}, ${points_ranking || ''}, ${Boolean(is_top_tier)})
       RETURNING id
     `;
     res.json({ id: result.rows[0].id });
@@ -562,8 +564,9 @@ app.post('/api/teams', async (req, res) => {
 });
 
 app.put('/api/teams/:id', async (req, res) => {
-  const { name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier } = req.body;
+  const { name, logo_url, region, description, reference_links, historical_records, points, points_ranking, is_top_tier } = req.body;
   const validatedTopTier = typeof is_top_tier === 'boolean' ? is_top_tier : null;
+  const validatedPoints = typeof points === 'string' ? points : null;
   const validatedPointsRanking = typeof points_ranking === 'string' ? points_ranking : null;
   try {
     await sql`
@@ -574,6 +577,10 @@ app.put('/api/teams/:id', async (req, res) => {
           description = ${description},
           reference_links = ${reference_links},
           historical_records = ${historical_records},
+          points = CASE
+            WHEN ${validatedPoints}::text IS NULL THEN points
+            ELSE ${validatedPoints}
+          END,
           points_ranking = CASE
             WHEN ${validatedPointsRanking}::text IS NULL THEN points_ranking
             ELSE ${validatedPointsRanking}

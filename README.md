@@ -1,28 +1,83 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# RMUL 2026 赛事管理系统
 
-# Run and deploy your AI Studio app
+一个用于电竞赛事管理、队伍资料沉淀、对战记录维护与 AI 赛前分析的全栈项目（React + Express + PostgreSQL）。
 
-This contains everything you need to run your app locally.
+## 核心能力
 
-View your app in AI Studio: https://ai.studio/apps/a7cb1d44-cf33-4ab1-84ef-e7fbb3a3cb1a
+- 赛事管理：创建/编辑赛事，配置赛事阶段（瑞士轮、分组、循环等）。
+- 队伍管理：维护队伍基础资料、历史战绩、强队标签、积分与积分排名。
+- 比赛管理：录入比赛、比分、状态、战报原文，并可生成 AI 战报总结。
+- AI 批量导入：上传/粘贴 CSV 或文本，自动识别队伍与比赛信息并导入。
+- 队伍对比预测：基于历史交手和当前赛事数据生成 AI 赛前预测报告。
 
-## Run Locally
+## 推荐使用顺序（重要）
 
-**Prerequisites:**  Node.js
+按以下顺序使用，效果最好：
 
+1. **先绑定 AI**
+   - 进入后台管理页，填写并保存 AI Key / API URL / 模型。
+   - 先点“测试 AI 连接”确认可用。
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+2. **准备队伍 CSV 表格**
+   - 建议列包含：`战队名, 是否甲级队伍, 积分, 积分排名, 历史战绩, 相关文章URL...`
+   - 第一列必须是战队名。
 
-## Deploy to Vercel
+3. **使用 AI 识别并添加队伍**
+   - 在后台“AI 批量导入战队数据”中上传 CSV/文本。
+   - 先预览识别结果，确认后导入（可勾选要导入的字段）。
 
-1. Push the project to a GitHub repository.
-2. Import the repository in [Vercel](https://vercel.com/new).
-3. In the Vercel project dashboard, go to **Storage** and create a new **Postgres** database (free tier available). Vercel will automatically inject the `POSTGRES_URL` and related environment variables.
-4. Optionally set `GEMINI_API_KEY` as an environment variable for AI features.
-5. Deploy — Vercel will run `vite build` and serve the frontend, while `server.ts` handles the API as a Serverless Function.
+4. **添加赛事和赛事阶段**
+   - 先创建赛事，再配置阶段（例如瑞士轮轮次、分组数、每组队伍数等）。
+
+5. **将队伍添加进赛事**
+   - 在后台“添加队伍到赛事”中批量选择队伍并加入赛事。
+
+6. **每场比赛结束后更新战绩**
+   - 在后台录入/更新比分、状态、比赛日期、战报原文。
+   - 可选：一键生成 AI 战报总结。
+
+## 本地运行
+
+### 1) 环境要求
+
+- Node.js 18+
+- 可用的 PostgreSQL（推荐 Vercel Postgres / Neon）
+
+### 2) 安装依赖
+
+```bash
+npm install
+```
+
+### 3) 配置环境变量
+
+参考 `.env.example` 配置数据库连接与服务地址等参数。
+
+### 4) 启动开发环境
+
+```bash
+npm run dev
+```
+
+默认会启动 API 服务与前端开发环境（按项目当前配置）。
+
+## 构建与检查
+
+```bash
+npm run lint
+npm run build
+```
+
+## 主要页面说明
+
+- `/`：赛事总览与快速入口
+- `/admin`：后台管理（AI 配置、队伍/赛事/比赛维护、AI 批量导入）
+- `/teams/:id`：队伍详情（历史战绩、参赛记录、近期比赛、积分/排名/强队标签）
+- `/compare`：队伍对比与 AI 赛前预测
+
+## 数据导入建议
+
+- 对“中英混排队名”，系统会做基础空格规范化匹配。
+- URL 建议独立成列或单元格中保持完整 `http(s)` 链接。
+- 导入前先预览，确认字段映射无误再“确认导入”。
+

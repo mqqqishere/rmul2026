@@ -78,12 +78,18 @@ export default function CompareTeams() {
           team1Details: {
             historical_records: team1Data?.historical_records || '',
             description: team1Data?.description || '',
-            region: team1Data?.region || ''
+            region: team1Data?.region || '',
+            is_top_tier: Boolean(team1Data?.is_top_tier),
+            points: team1Data?.points || '',
+            points_ranking: team1Data?.points_ranking || ''
           },
           team2Details: {
             historical_records: team2Data?.historical_records || '',
             description: team2Data?.description || '',
-            region: team2Data?.region || ''
+            region: team2Data?.region || '',
+            is_top_tier: Boolean(team2Data?.is_top_tier),
+            points: team2Data?.points || '',
+            points_ranking: team2Data?.points_ranking || ''
           },
           historicalMatches: matches,
           currentTournamentMatches,
