@@ -16,12 +16,15 @@ export interface TournamentStage {
   group_count?: number | null;
   teams_per_group?: number | null;
   swiss_rounds?: number | null;
+  swiss_in_groups?: boolean;
+  stage_groups?: Record<string, number[]> | null;
 }
 
 export interface Match {
   id: number;
   tournament_id: number;
   stage: string;
+  group_name?: string;
   round: number;
   team1_id: number;
   team2_id: number;
