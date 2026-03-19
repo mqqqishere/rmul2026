@@ -244,7 +244,7 @@ export default function Admin() {
 
     if (candidates.length === 0) {
       setImportText('');
-      alert('文件读取失败，请重试。');
+      alert('文件读取失败：未能识别文本编码，请确认文件为有效文本格式（UTF-8 / GB18030 / Big5）。');
       return;
     }
 
@@ -484,7 +484,7 @@ export default function Admin() {
       })
     });
     alert('赛事阶段已添加！');
-    setNewStage({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5, swiss_in_groups: false, stage_groups: {} });
+    setNewStage({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5, swiss_in_groups: false, stage_groups: {} as Record<string, string[]> });
     fetchData();
   };
 

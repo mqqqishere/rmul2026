@@ -5,6 +5,16 @@ import { GoogleGenAI } from '@google/genai';
 const app = express();
 app.use(express.json());
 
+function safeParseStageGroups(raw: any): Record<string, number[]> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // 数据库懒初始化，避免冷启动竞争条件
 let dbReady: Promise<void> | null = null;
 function ensureDbReady() {
@@ -307,7 +317,7 @@ app.get('/api/tournaments', async (req, res) => {
       ...t,
       stages: stages
         .filter((s: any) => s.tournament_id === t.id)
-        .map((s: any) => ({ ...s, stage_groups: s.stage_groups ? JSON.parse(s.stage_groups) : null })),
+        .map((s: any) => ({ ...s, stage_groups: safeParseStageGroups(s.stage_groups) })),
       teams: tournamentTeams.filter((tt: any) => tt.tournament_id === t.id)
     }));
     
@@ -345,7 +355,7 @@ app.get('/api/tournaments/:id', async (req, res) => {
       matches,
       stages: stages.map((stage: any) => ({
         ...stage,
-        stage_groups: stage.stage_groups ? JSON.parse(stage.stage_groups) : null
+        stage_groups: safeParseStageGroups(stage.stage_groups)
       }))
     });
   } catch (error: any) {
@@ -385,7 +395,7 @@ app.get('/api/tournaments/:id/stages', async (req, res) => {
     const { rows: stages } = await sql`SELECT * FROM tournament_stages WHERE tournament_id = ${req.params.id}`;
     res.json(stages.map((stage: any) => ({
       ...stage,
-      stage_groups: stage.stage_groups ? JSON.parse(stage.stage_groups) : null
+      stage_groups: safeParseStageGroups(stage.stage_groups)
     })));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
