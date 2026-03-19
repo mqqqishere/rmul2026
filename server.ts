@@ -5,6 +5,15 @@ import { GoogleGenAI } from '@google/genai';
 const app = express();
 app.use(express.json());
 
+const normalizeTeamName = (name: string) => (
+  (name || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .replace(/([\u4e00-\u9fff])\s+([A-Za-z0-9])/g, '$1$2')
+    .replace(/([A-Za-z0-9])\s+([\u4e00-\u9fff])/g, '$1$2')
+    .toLowerCase()
+);
+
 function safeParseStageGroups(raw: any): Record<string, number[]> | null {
   if (!raw) return null;
   try {
@@ -256,8 +265,10 @@ app.post('/api/ai/predict', async (req, res) => {
 1) 优先参考“当前比赛过往比分数据”（current_tournament_matches）。
 2) 若当前比赛数据不足，再参考“历史数据”（historical_matches）。
 3) 输出结构包含：两队近期状态、交手记录、关键胜负手、结论。
-4) 必须基于给定数据，不得虚构。
-${customPrompt ? `5) 额外用户提示词（需尽量遵循）：${customPrompt}` : ''}
+4) 将 is_top_tier 视为“强队”标签，结合 points_ranking（可含积分/排名信息）进行强弱判断。
+5) 当双方历史数据接近时，优先参考 points_ranking（数值越小通常排名越高）优化比较结论。
+6) 必须基于给定数据，不得虚构。
+${customPrompt ? `7) 额外用户提示词（需尽量遵循）：${customPrompt}` : ''}
 
 数据：
 ${JSON.stringify(history)}`;
@@ -278,7 +289,7 @@ app.post('/api/ai/import-table', async (req, res) => {
     const { rows: existingTeams } = await sql`SELECT name FROM teams`;
     const existingTeamNames = existingTeams.map((t: any) => t.name);
 
-    const prompt = `请解析以下表格数据，识别战队名称、历史战绩和历史比赛信息，并以JSON格式返回（只返回JSON，不要有任何其他文字或代码块标记）。
+    const prompt = `请解析以下表格数据，识别战队名称、强队标签、积分/积分排名、历史战绩和历史比赛信息，并以JSON格式返回（只返回JSON，不要有任何其他文字或代码块标记）。
 
 表格数据：
 ${tableData}
@@ -288,11 +299,13 @@ ${tableData}
   "teams": [
     {
       "name": "战队名称",
+      "is_top_tier": true,
+      "points": "积分（如能识别，否则留空）",
+      "points_ranking": "积分排名（如能识别，否则留空）",
       "region": "赛区（如能识别，否则留空）",
       "historical_records": "所有历史奖项和战绩的汇总文字",
       "description": "简短描述（可选）",
-      "points_ranking": "积分排名（如能识别，否则留空）",
-      "is_top_tier": true
+      "reference_links": "若表格中出现文章URL，请提取并用换行连接"
     }
   ],
   "matches": [
@@ -310,12 +323,14 @@ ${tableData}
 注意：
 - 每行数据对应一支战队
 - 第一列必须为战队名称
-- 比赛数据中第一列（team1_name）必须与以下“已有战队名”完全一致（区分大小写，不允许近似匹配）；不一致的比赛不要输出到matches中：
+- 若表格存在“是否甲级队伍、积分、积分排名”字段，优先按第2-4列解析到 is_top_tier / points / points_ranking
+- 队名若是中英混合（如“北京 Wolves”），不要在中英之间增加或删除空格，尽量保持原样
+- 比赛数据中第一列（team1_name）尽量与以下“已有战队名”一致，可做最小必要的空格规范化；无法确定时宁可不输出该场比赛：
 ${JSON.stringify(existingTeamNames)}
 - 如果比分格式为"2-1"，team1_score=2, team2_score=1
 - 如果没有明确的对战比赛数据，matches数组返回空数组[]
 - historical_records字段应整合该战队所有的历史信息（奖项、比分等）
-- points_ranking 为字符串，可为空；is_top_tier 为布尔值，无法判断时默认 false
+- is_top_tier 为布尔值，无法判断时默认 false；points 和 points_ranking 为字符串，可为空
 - 只返回纯JSON，不要markdown代码块`;
     const result = await generateAIContent(prompt);
     if (!result || !result.trim()) {
@@ -334,10 +349,15 @@ ${JSON.stringify(existingTeamNames)}
     };
 
     const existingTeamNameSet = new Set(existingTeamNames);
+    const normalizedExistingTeamNameSet = new Set(existingTeamNames.map((name: string) => normalizeTeamName(name)));
     const skippedMatches: any[] = [];
     const filteredMatches = normalized.matches.filter((m: any) => {
       const team1Name = (m?.team1_name || '').toString().trim();
-      if (!team1Name || !existingTeamNameSet.has(team1Name)) {
+      if (!team1Name) {
+        skippedMatches.push(m);
+        return false;
+      }
+      if (!existingTeamNameSet.has(team1Name) && !normalizedExistingTeamNameSet.has(normalizeTeamName(team1Name))) {
         skippedMatches.push(m);
         return false;
       }
