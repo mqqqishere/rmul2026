@@ -303,7 +303,7 @@ export default function Admin() {
     );
     const successIds = results
       .map((result, index) => (result.status === 'fulfilled' && result.value.ok ? batchDeleteMatchIds[index] : null))
-      .filter((id): id is string => Boolean(id));
+      .filter(Boolean) as string[];
     const successCount = successIds.length;
     const failedCount = batchDeleteMatchIds.length - successCount;
     alert(`批量删除比赛完成：成功 ${successCount}${failedCount > 0 ? `，失败 ${failedCount}` : ''}`);
@@ -436,6 +436,11 @@ export default function Admin() {
       const existing = existingTeamMap[matchedName];
       const importUrls = extractImportUrls(t);
       const mergedReferenceLinks = appendUniqueLinks(existing?.reference_links || '', importUrls);
+      const pointsRaw = (t.points || '').toString().trim();
+      const rankingRaw = (t.points_ranking || '').toString().trim();
+      const mergedPointsRanking = pointsRaw && rankingRaw
+        ? `积分:${pointsRaw}; 排名:${rankingRaw}`
+        : (rankingRaw || pointsRaw);
       if (importUrls.length > 0) {
         logs.push(`🔗 识别到 ${importUrls.length} 个链接并合并至队伍相关文章：${matchedName}`);
       }
@@ -449,7 +454,7 @@ export default function Admin() {
         description: importTeamColumns.description ? (t.description || '') : (existing?.description || ''),
         reference_links: mergedReferenceLinks,
         historical_records: importTeamColumns.historical_records ? (t.historical_records || '') : (existing?.historical_records || ''),
-        points_ranking: importTeamColumns.points_ranking ? (t.points_ranking || t.points || '') : (existing?.points_ranking || ''),
+        points_ranking: importTeamColumns.points_ranking ? mergedPointsRanking : (existing?.points_ranking || ''),
         is_top_tier: importTeamColumns.is_top_tier ? Boolean(t.is_top_tier) : Boolean(existing?.is_top_tier)
       };
       if (teamNameToId[matchedName]) {
@@ -867,7 +872,7 @@ export default function Admin() {
         <p className="text-slate-400 text-sm mb-4">
           请按以下格式准备 CSV/文本数据（支持粘贴或上传 <strong>.csv / .txt</strong> 文件）：<br />
           <span className="font-mono text-emerald-400">战队名, 是否甲级队伍, 积分, 积分排名, 历史比分1, 历史奖项1, 相关文章URL, ...</span><br />
-          <span className="text-slate-500">第1列必须为战队名；第2-4列建议依次为“是否甲级队伍 / 积分 / 积分排名”；其余列可为历史比分、奖项或 URL。若队名中英混排，系统会进行空格容错匹配并自动合并 URL 到队伍相关文章。</span>
+          <span className="text-slate-500">第1列必须为战队名；第2-4列建议依次为“是否甲级队伍 / 积分 / 积分排名”（若顺序不同，AI 会按列名/语义尽量识别）；其余列可为历史比分、奖项或 URL。若队名中英混排，系统会进行空格容错匹配并自动合并 URL 到队伍相关文章。若同时识别到积分与排名，会按 <code>积分:X; 排名:Y</code> 统一保存到“积分/积分排名”。</span>
         </p>
         <div className="space-y-3">
           <div className="flex gap-2 items-center">
