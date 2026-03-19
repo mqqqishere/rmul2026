@@ -4,6 +4,16 @@ import DatePicker from 'react-datepicker';
 import "react-datepicker/dist/react-datepicker.css";
 import { zhCN } from 'date-fns/locale';
 
+const ENCODINGS_TO_TRY = ['utf-8', 'gb18030', 'big5'] as const;
+
+const buildGroupLabels = (groupCount?: number | null) => {
+  const count = Math.max(0, Number(groupCount) || 0);
+  return Array.from({ length: count }, (_, idx) => `第${idx + 1}组`);
+};
+
+const countChineseChars = (text: string) => (text.match(/[\u4e00-\u9fff]/g) || []).length;
+const countReplacementChars = (text: string) => (text.match(/�/g) || []).length;
+
 export default function Admin() {
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
@@ -122,7 +132,7 @@ export default function Admin() {
   // Matches management state
   const [allMatches, setAllMatches] = useState<(Match & { tournament_name?: string })[]>([]);
   const [editingMatchId, setEditingMatchId] = useState('');
-  const [editMatch, setEditMatch] = useState({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+  const [editMatch, setEditMatch] = useState({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
   const [editMatchDetails, setEditMatchDetails] = useState('');
 
   const handleEditMatchSelect = (matchId: string) => {
@@ -130,9 +140,10 @@ export default function Admin() {
     if (matchId) {
       const m = allMatches.find(x => x.id.toString() === matchId);
       if (m) {
-        setEditMatch({
+      setEditMatch({
           tournament_id: m.tournament_id?.toString() || '',
           stage: m.stage || '',
+          group_name: m.group_name || '',
           round: m.round || 1,
           team1_id: m.team1_id?.toString() || '',
           team2_id: m.team2_id?.toString() || '',
@@ -144,7 +155,7 @@ export default function Admin() {
         setEditMatchDetails(m.raw_report || '');
       }
     } else {
-      setEditMatch({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+      setEditMatch({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
       setEditMatchDetails('');
     }
   };
@@ -185,6 +196,7 @@ export default function Admin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...editMatch,
+        round: getSuggestedRound(editMatch.tournament_id, editMatch.stage, editMatch.group_name, editingMatchId),
         match_date: editMatch.match_date.toISOString(),
         raw_report: editMatchDetails,
         report
@@ -192,7 +204,7 @@ export default function Admin() {
     });
     alert('比赛已更新！');
     setEditingMatchId('');
-    setEditMatch({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+    setEditMatch({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
     setEditMatchDetails('');
     setEditUseAiSummary(false);
     fetchData();
@@ -204,7 +216,7 @@ export default function Admin() {
     setAllMatches(prev => prev.filter(m => m.id.toString() !== matchId));
     if (editingMatchId === matchId) {
       setEditingMatchId('');
-      setEditMatch({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+      setEditMatch({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
     }
   };
 
@@ -217,14 +229,32 @@ export default function Admin() {
   const [importLog, setImportLog] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleImportFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      setImportText(ev.target?.result as string || '');
-    };
-    reader.readAsText(file, 'UTF-8');
+    const buffer = await file.arrayBuffer();
+    const candidates = ENCODINGS_TO_TRY.map((encoding) => {
+      try {
+        const text = new TextDecoder(encoding).decode(buffer);
+        return { encoding, text };
+      } catch {
+        return { encoding, text: '' };
+      }
+    }).filter(x => x.text);
+
+    if (candidates.length === 0) {
+      setImportText('');
+      alert('文件读取失败：未能识别文本编码，请确认文件为有效文本格式（UTF-8 / GB18030 / Big5）。');
+      return;
+    }
+
+    const best = candidates.sort((a, b) => {
+      const aScore = countChineseChars(a.text) * 2 - countReplacementChars(a.text);
+      const bScore = countChineseChars(b.text) * 2 - countReplacementChars(b.text);
+      return bScore - aScore;
+    })[0];
+
+    setImportText(best.text);
   };
 
   const handleParseImport = async () => {
@@ -360,7 +390,7 @@ export default function Admin() {
   const [apiTestResult, setApiTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   // Add match state
-  const [newMatch, setNewMatch] = useState({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+  const [newMatch, setNewMatch] = useState({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
   const [matchDetails, setMatchDetails] = useState('');
   const [useAiSummary, setUseAiSummary] = useState(true);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -369,7 +399,7 @@ export default function Admin() {
   const [editUseAiSummary, setEditUseAiSummary] = useState(false);
 
   // Add stage state (for edit tournament section)
-  const [newStage, setNewStage] = useState({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5 });
+  const [newStage, setNewStage] = useState({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5, swiss_in_groups: false, stage_groups: {} as Record<string, string[]> });
 
   const fetchData = () => {
     fetch('/api/tournaments').then(res => res.json()).then(setTournaments);
@@ -433,6 +463,12 @@ export default function Admin() {
   const handleAddStage = async (e: FormEvent) => {
     e.preventDefault();
     if (!editingTournamentId) return;
+
+    const stageGroupsPayload: Record<string, number[]> = {};
+    Object.entries(newStage.stage_groups || {}).forEach(([groupName, teamIds]) => {
+      const parsedIds = (teamIds || []).map(id => parseInt(id, 10)).filter(id => !Number.isNaN(id));
+      if (parsedIds.length > 0) stageGroupsPayload[groupName] = parsedIds;
+    });
     
     await fetch(`/api/tournaments/${editingTournamentId}/stages`, {
       method: 'POST',
@@ -440,13 +476,15 @@ export default function Admin() {
       body: JSON.stringify({
         name: newStage.name,
         format: newStage.format,
-        group_count: newStage.format === 'Round Robin' ? newStage.group_count : null,
-        teams_per_group: newStage.format === 'Round Robin' ? newStage.teams_per_group : null,
-        swiss_rounds: newStage.format === 'Swiss' ? newStage.swiss_rounds : null
+        group_count: newStage.swiss_in_groups || newStage.format === 'Round Robin' ? newStage.group_count : null,
+        teams_per_group: newStage.swiss_in_groups || newStage.format === 'Round Robin' ? newStage.teams_per_group : null,
+        swiss_rounds: newStage.format === 'Swiss' ? newStage.swiss_rounds : null,
+        swiss_in_groups: newStage.format === 'Swiss' ? newStage.swiss_in_groups : false,
+        stage_groups: stageGroupsPayload
       })
     });
     alert('赛事阶段已添加！');
-    setNewStage({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5 });
+    setNewStage({ name: '', format: 'Swiss', group_count: 4, teams_per_group: 4, swiss_rounds: 5, swiss_in_groups: false, stage_groups: {} as Record<string, string[]> });
     fetchData();
   };
 
@@ -455,6 +493,18 @@ export default function Admin() {
     if (!window.confirm('确定要删除此阶段？')) return;
     await fetch(`/api/tournaments/${editingTournamentId}/stages/${stageId}`, { method: 'DELETE' });
     fetchData();
+  };
+
+  const getSuggestedRound = (tournamentId: string, stage: string, groupName: string, excludeMatchId?: string) => {
+    if (!tournamentId || !stage) return 1;
+    return allMatches
+      .filter(m =>
+        m.tournament_id?.toString() === tournamentId &&
+        m.stage === stage &&
+        (m.group_name || '') === (groupName || '') &&
+        (!excludeMatchId || m.id.toString() !== excludeMatchId)
+      )
+      .reduce((max, m) => Math.max(max, m.round || 0), 0) + 1;
   };
 
   const handleAddMatch = async (e: FormEvent) => {
@@ -490,18 +540,27 @@ export default function Admin() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...newMatch,
+        round: getSuggestedRound(newMatch.tournament_id, newMatch.stage, newMatch.group_name),
         match_date: newMatch.match_date.toISOString(),
         report: report,
         raw_report: matchDetails
       })
     });
     alert('比赛已添加！');
-    setNewMatch({ tournament_id: '', stage: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
+    setNewMatch({ tournament_id: '', stage: '', group_name: '', round: 1, team1_id: '', team2_id: '', team1_score: 0, team2_score: 0, status: 'Scheduled', match_date: new Date() });
     setMatchDetails('');
   };
 
   const selectedTournament = tournaments.find(t => t.id.toString() === newMatch.tournament_id);
   const selectedEditMatchTournament = tournaments.find(t => t.id.toString() === editMatch.tournament_id);
+  const selectedAddStage = selectedTournament?.stages?.find(s => s.name === newMatch.stage);
+  const selectedEditStage = selectedEditMatchTournament?.stages?.find(s => s.name === editMatch.stage);
+  const addTeamPool = selectedTournament?.teams || teams;
+  const editTeamPool = selectedEditMatchTournament?.teams || teams;
+  const selectedAddGroupTeams = (selectedAddStage?.stage_groups?.[newMatch.group_name] || []).map(teamId => teamId.toString());
+  const selectedEditGroupTeams = (selectedEditStage?.stage_groups?.[editMatch.group_name] || []).map(teamId => teamId.toString());
+  const addRoundSuggestion = getSuggestedRound(newMatch.tournament_id, newMatch.stage, newMatch.group_name);
+  const editRoundSuggestion = getSuggestedRound(editMatch.tournament_id, editMatch.stage, editMatch.group_name, editingMatchId);
 
   const handleSaveApiKey = async (e: FormEvent) => {
     e.preventDefault();
@@ -884,17 +943,36 @@ export default function Admin() {
                 return stages.length > 0 ? (
                   <div className="space-y-2 mb-4">
                     {stages.map(s => (
-                      <div key={s.id} className="flex items-center justify-between bg-slate-950 rounded-lg px-3 py-2">
-                        <span className="text-slate-300 text-sm">
-                          {s.name} <span className="text-slate-500">({s.format})</span>
-                          {s.format === 'Round Robin' && s.group_count && s.teams_per_group && (
-                            <span className="text-emerald-400 ml-2">[{s.group_count} 组 / 每组 {s.teams_per_group} 队]</span>
-                          )}
-                          {s.format === 'Swiss' && s.swiss_rounds && (
-                            <span className="text-emerald-400 ml-2">[{s.swiss_rounds} 轮]</span>
-                          )}
-                        </span>
-                        <button type="button" onClick={() => handleDeleteStage(s.id)} className="text-red-500 hover:text-red-400 text-xs">删除</button>
+                      <div key={s.id} className="bg-slate-950 rounded-lg px-3 py-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-slate-300 text-sm">
+                            {s.name} <span className="text-slate-500">({s.format})</span>
+                            {(s.format === 'Round Robin' || s.swiss_in_groups) && s.group_count && s.teams_per_group && (
+                              <span className="text-emerald-400 ml-2">[{s.group_count} 组 / 每组 {s.teams_per_group} 队]</span>
+                            )}
+                            {s.format === 'Swiss' && s.swiss_in_groups && (
+                              <span className="text-emerald-400 ml-2">[先分组后组内瑞士轮]</span>
+                            )}
+                            {s.format === 'Swiss' && s.swiss_rounds && (
+                              <span className="text-emerald-400 ml-2">[{s.swiss_rounds} 轮]</span>
+                            )}
+                          </span>
+                          <button type="button" onClick={() => handleDeleteStage(s.id)} className="text-red-500 hover:text-red-400 text-xs">删除</button>
+                        </div>
+                        {s.stage_groups && Object.keys(s.stage_groups).length > 0 && (
+                          <div className="mt-2 space-y-1">
+                            <p className="text-xs text-slate-500">分组队伍：</p>
+                            {Object.entries(s.stage_groups).map(([groupName, teamIds]) => (
+                              <div key={groupName} className="text-xs text-slate-400 bg-slate-900 rounded px-2 py-1">
+                                <span className="text-slate-300 font-medium">{groupName}：</span>
+                                {(teamIds as number[])
+                                  .map(teamId => t?.teams?.find(team => team.id === teamId)?.name)
+                                  .filter(Boolean)
+                                  .join('、') || '未分配'}
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
@@ -915,7 +993,25 @@ export default function Admin() {
                     <option value="Double Elimination">双败淘汰</option>
                   </select>
                 </div>
-                {newStage.format === 'Round Robin' && (
+                {newStage.format === 'Swiss' && (
+                  <label className="flex items-center gap-2 text-xs text-slate-300 mb-1">
+                    <input
+                      type="checkbox"
+                      checked={newStage.swiss_in_groups}
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        setNewStage({
+                          ...newStage,
+                          swiss_in_groups: checked,
+                          stage_groups: checked ? (newStage.stage_groups || {}) : {}
+                        });
+                      }}
+                      className="w-4 h-4 accent-emerald-500"
+                    />
+                    先分组再组内瑞士轮
+                  </label>
+                )}
+                {(newStage.format === 'Round Robin' || (newStage.format === 'Swiss' && newStage.swiss_in_groups)) && (
                   <>
                     <div className="flex-1 min-w-28">
                       <label className="block text-xs font-medium text-slate-400 mb-1">小组数</label>
@@ -952,6 +1048,35 @@ export default function Admin() {
                       onChange={e => setNewStage({...newStage, swiss_rounds: parseInt(e.target.value) || 1})}
                       className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-white text-sm focus:outline-none focus:border-emerald-500"
                     />
+                  </div>
+                )}
+                {(newStage.format === 'Round Robin' || (newStage.format === 'Swiss' && newStage.swiss_in_groups)) && editingTournamentId && (
+                  <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-3 pt-2">
+                    {buildGroupLabels(newStage.group_count).map(groupName => (
+                      <div key={groupName} className="bg-slate-900 rounded-lg p-3 border border-slate-800">
+                        <label className="block text-xs font-medium text-slate-400 mb-1">{groupName} 队伍</label>
+                        <select
+                          multiple
+                          value={newStage.stage_groups[groupName] || []}
+                          onChange={e => {
+                            const values = Array.from(e.target.selectedOptions, option => option.value);
+                            setNewStage({
+                              ...newStage,
+                              stage_groups: {
+                                ...newStage.stage_groups,
+                                [groupName]: values
+                              }
+                            });
+                          }}
+                          className="w-full min-h-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-xs focus:outline-none focus:border-emerald-500"
+                        >
+                          {(tournaments.find(x => x.id.toString() === editingTournamentId)?.teams || []).map(team => (
+                            <option key={team.id} value={team.id}>{team.name}</option>
+                          ))}
+                        </select>
+                        <p className="text-[11px] text-slate-500 mt-1">按住 Ctrl/Cmd 或 Shift 多选</p>
+                      </div>
+                    ))}
                   </div>
                 )}
                 <button type="submit" className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">
@@ -1092,21 +1217,32 @@ export default function Admin() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">赛事</label>
-              <select required value={newMatch.tournament_id} onChange={e => setNewMatch({...newMatch, tournament_id: e.target.value, stage: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+              <select required value={newMatch.tournament_id} onChange={e => setNewMatch({...newMatch, tournament_id: e.target.value, stage: '', group_name: '', team1_id: '', team2_id: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                 <option value="">选择赛事...</option>
                 {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-400 mb-1">阶段</label>
-              <select required value={newMatch.stage} onChange={e => setNewMatch({...newMatch, stage: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" disabled={!newMatch.tournament_id}>
+              <select required value={newMatch.stage} onChange={e => setNewMatch({...newMatch, stage: e.target.value, group_name: '', team1_id: '', team2_id: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" disabled={!newMatch.tournament_id}>
                 <option value="">选择阶段...</option>
                 {selectedTournament?.stages?.map(s => <option key={s.id} value={s.name}>{s.name} ({s.format})</option>)}
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-slate-400 mb-1">轮次 (Round)</label>
-              <input required type="number" min="1" value={newMatch.round} onChange={e => setNewMatch({...newMatch, round: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+              <label className="block text-sm font-medium text-slate-400 mb-1">小组</label>
+              <select
+                value={newMatch.group_name}
+                onChange={e => setNewMatch({...newMatch, group_name: e.target.value, team1_id: '', team2_id: ''})}
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+                disabled={!newMatch.stage}
+              >
+                <option value="">全部/不分组</option>
+                {selectedAddStage?.stage_groups && Object.keys(selectedAddStage.stage_groups).map(groupName => (
+                  <option key={groupName} value={groupName}>{groupName}</option>
+                ))}
+              </select>
+              <p className="text-xs text-emerald-400 mt-1">将自动保存为第 {addRoundSuggestion} 轮</p>
             </div>
           </div>
 
@@ -1116,7 +1252,7 @@ export default function Admin() {
                 <label className="block text-sm font-medium text-slate-400 mb-1">队伍 1</label>
                 <select required value={newMatch.team1_id} onChange={e => setNewMatch({...newMatch, team1_id: e.target.value})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                   <option value="">选择队伍 1...</option>
-                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  {(selectedAddGroupTeams.length > 0 ? addTeamPool.filter(t => selectedAddGroupTeams.includes(t.id.toString())) : addTeamPool).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
               <div>
@@ -1130,7 +1266,7 @@ export default function Admin() {
                 <label className="block text-sm font-medium text-slate-400 mb-1">队伍 2</label>
                 <select required value={newMatch.team2_id} onChange={e => setNewMatch({...newMatch, team2_id: e.target.value})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                   <option value="">选择队伍 2...</option>
-                  {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  {(selectedAddGroupTeams.length > 0 ? addTeamPool.filter(t => selectedAddGroupTeams.includes(t.id.toString())) : addTeamPool).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
               <div>
@@ -1200,7 +1336,7 @@ export default function Admin() {
             <option value="">选择要编辑的比赛...</option>
             {allMatches.map(m => (
               <option key={m.id} value={m.id}>
-                [{m.tournament_name}] {m.team1_name} {m.team1_score}-{m.team2_score} {m.team2_name} ({m.stage || ''} R{m.round})
+                [{m.tournament_name}] {m.team1_name} {m.team1_score}-{m.team2_score} {m.team2_name} ({m.stage || ''}{m.group_name ? ` ${m.group_name}` : ''} R{m.round})
               </option>
             ))}
           </select>
@@ -1210,21 +1346,32 @@ export default function Admin() {
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">赛事</label>
-                <select required value={editMatch.tournament_id} onChange={e => setEditMatch({...editMatch, tournament_id: e.target.value, stage: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                <select required value={editMatch.tournament_id} onChange={e => setEditMatch({...editMatch, tournament_id: e.target.value, stage: '', group_name: '', team1_id: '', team2_id: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                   <option value="">选择赛事...</option>
                   {tournaments.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-1">阶段</label>
-                <select required value={editMatch.stage} onChange={e => setEditMatch({...editMatch, stage: e.target.value})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
+                <select required value={editMatch.stage} onChange={e => setEditMatch({...editMatch, stage: e.target.value, group_name: '', team1_id: '', team2_id: ''})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                   <option value="">选择阶段...</option>
                   {selectedEditMatchTournament?.stages?.map(s => <option key={s.id} value={s.name}>{s.name} ({s.format})</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-slate-400 mb-1">轮次</label>
-                <input required type="number" min="1" value={editMatch.round} onChange={e => setEditMatch({...editMatch, round: parseInt(e.target.value)})} className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500" />
+                <label className="block text-sm font-medium text-slate-400 mb-1">小组</label>
+                <select
+                  value={editMatch.group_name}
+                  onChange={e => setEditMatch({...editMatch, group_name: e.target.value, team1_id: '', team2_id: ''})}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500"
+                  disabled={!editMatch.stage}
+                >
+                  <option value="">全部/不分组</option>
+                  {selectedEditStage?.stage_groups && Object.keys(selectedEditStage.stage_groups).map(groupName => (
+                    <option key={groupName} value={groupName}>{groupName}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-emerald-400 mt-1">将自动保存为第 {editRoundSuggestion} 轮</p>
               </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 items-center bg-slate-950/50 p-4 rounded-lg border border-slate-800">
@@ -1233,7 +1380,7 @@ export default function Admin() {
                   <label className="block text-sm font-medium text-slate-400 mb-1">队伍 1</label>
                   <select required value={editMatch.team1_id} onChange={e => setEditMatch({...editMatch, team1_id: e.target.value})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                     <option value="">选择队伍 1...</option>
-                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    {(selectedEditGroupTeams.length > 0 ? editTeamPool.filter(t => selectedEditGroupTeams.includes(t.id.toString())) : editTeamPool).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </div>
                 <div>
@@ -1246,7 +1393,7 @@ export default function Admin() {
                   <label className="block text-sm font-medium text-slate-400 mb-1">队伍 2</label>
                   <select required value={editMatch.team2_id} onChange={e => setEditMatch({...editMatch, team2_id: e.target.value})} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-white focus:outline-none focus:border-emerald-500">
                     <option value="">选择队伍 2...</option>
-                    {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    {(selectedEditGroupTeams.length > 0 ? editTeamPool.filter(t => selectedEditGroupTeams.includes(t.id.toString())) : editTeamPool).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </div>
                 <div>

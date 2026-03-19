@@ -5,6 +5,16 @@ import { GoogleGenAI } from '@google/genai';
 const app = express();
 app.use(express.json());
 
+function safeParseStageGroups(raw: any): Record<string, number[]> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 // 数据库懒初始化，避免冷启动竞争条件
 let dbReady: Promise<void> | null = null;
 function ensureDbReady() {
@@ -62,17 +72,22 @@ async function initDb() {
         group_count INTEGER,
         teams_per_group INTEGER,
         swiss_rounds INTEGER,
+        swiss_in_groups BOOLEAN DEFAULT FALSE,
+        stage_groups TEXT,
         FOREIGN KEY (tournament_id) REFERENCES tournaments(id) ON DELETE CASCADE
       );
     `;
     await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS group_count INTEGER;`;
     await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS teams_per_group INTEGER;`;
     await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS swiss_rounds INTEGER;`;
+    await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS swiss_in_groups BOOLEAN DEFAULT FALSE;`;
+    await sql`ALTER TABLE tournament_stages ADD COLUMN IF NOT EXISTS stage_groups TEXT;`;
     await sql`
       CREATE TABLE IF NOT EXISTS matches (
         id SERIAL PRIMARY KEY,
         tournament_id INTEGER,
         stage TEXT,
+        group_name TEXT,
         round INTEGER,
         team1_id INTEGER,
         team2_id INTEGER,
@@ -87,6 +102,7 @@ async function initDb() {
         FOREIGN KEY (team2_id) REFERENCES teams(id) ON DELETE CASCADE
       );
     `;
+    await sql`ALTER TABLE matches ADD COLUMN IF NOT EXISTS group_name TEXT;`;
     await sql`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
@@ -290,10 +306,19 @@ app.get('/api/tournaments', async (req, res) => {
   try {
     const { rows: tournaments } = await sql`SELECT * FROM tournaments ORDER BY start_date DESC`;
     const { rows: stages } = await sql`SELECT * FROM tournament_stages`;
+    const { rows: tournamentTeams } = await sql`
+      SELECT tt.tournament_id, t.id, t.name, t.logo_url, t.region, t.description, t.reference_links, t.historical_records
+      FROM tournament_teams tt
+      JOIN teams t ON t.id = tt.team_id
+      ORDER BY t.name ASC
+    `;
     
     const tournamentsWithStages = tournaments.map((t: any) => ({
       ...t,
-      stages: stages.filter((s: any) => s.tournament_id === t.id)
+      stages: stages
+        .filter((s: any) => s.tournament_id === t.id)
+        .map((s: any) => ({ ...s, stage_groups: safeParseStageGroups(s.stage_groups) })),
+      teams: tournamentTeams.filter((tt: any) => tt.tournament_id === t.id)
     }));
     
     res.json(tournamentsWithStages);
@@ -324,7 +349,15 @@ app.get('/api/tournaments/:id', async (req, res) => {
 
     const { rows: stages } = await sql`SELECT * FROM tournament_stages WHERE tournament_id = ${req.params.id}`;
 
-    res.json({ ...tournamentRows[0], teams, matches, stages });
+    res.json({
+      ...tournamentRows[0],
+      teams,
+      matches,
+      stages: stages.map((stage: any) => ({
+        ...stage,
+        stage_groups: safeParseStageGroups(stage.stage_groups)
+      }))
+    });
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
@@ -360,14 +393,17 @@ app.put('/api/tournaments/:id', async (req, res) => {
 app.get('/api/tournaments/:id/stages', async (req, res) => {
   try {
     const { rows: stages } = await sql`SELECT * FROM tournament_stages WHERE tournament_id = ${req.params.id}`;
-    res.json(stages);
+    res.json(stages.map((stage: any) => ({
+      ...stage,
+      stage_groups: safeParseStageGroups(stage.stage_groups)
+    })));
   } catch (error: any) {
     res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/tournaments/:id/stages', async (req, res) => {
-  const { name, format, group_count, teams_per_group, swiss_rounds } = req.body;
+  const { name, format, group_count, teams_per_group, swiss_rounds, swiss_in_groups, stage_groups } = req.body;
   try {
     const parsedGroupCount = group_count != null ? parseInt(group_count, 10) : Number.NaN;
     const parsedTeamsPerGroup = teams_per_group != null ? parseInt(teams_per_group, 10) : Number.NaN;
@@ -375,10 +411,12 @@ app.post('/api/tournaments/:id/stages', async (req, res) => {
     const groupCount = !Number.isNaN(parsedGroupCount) && parsedGroupCount > 0 ? parsedGroupCount : null;
     const teamsPerGroup = !Number.isNaN(parsedTeamsPerGroup) && parsedTeamsPerGroup > 0 ? parsedTeamsPerGroup : null;
     const swissRounds = !Number.isNaN(parsedSwissRounds) && parsedSwissRounds > 0 ? parsedSwissRounds : null;
+    const swissInGroups = Boolean(swiss_in_groups);
+    const stageGroupsText = stage_groups && typeof stage_groups === 'object' ? JSON.stringify(stage_groups) : null;
 
     const result = await sql`
-      INSERT INTO tournament_stages (tournament_id, name, format, group_count, teams_per_group, swiss_rounds)
-      VALUES (${req.params.id}, ${name}, ${format}, ${groupCount}, ${teamsPerGroup}, ${swissRounds})
+      INSERT INTO tournament_stages (tournament_id, name, format, group_count, teams_per_group, swiss_rounds, swiss_in_groups, stage_groups)
+      VALUES (${req.params.id}, ${name}, ${format}, ${groupCount}, ${teamsPerGroup}, ${swissRounds}, ${swissInGroups}, ${stageGroupsText})
       RETURNING id
     `;
     res.json({ id: result.rows[0].id });
@@ -521,10 +559,10 @@ app.get('/api/matches/compare/:team1/:team2', async (req, res) => {
 });
 
 app.post('/api/matches', async (req, res) => {
-  const { tournament_id, stage, round, team1_id, team2_id, team1_score, team2_score, status, match_date, report, raw_report } = req.body;
+  const { tournament_id, stage, group_name, round, team1_id, team2_id, team1_score, team2_score, status, match_date, report, raw_report } = req.body;
   try {
     const result = await sql`
-      INSERT INTO matches (tournament_id, stage, round, team1_id, team2_id, team1_score, team2_score, status, match_date, report, raw_report) VALUES (${tournament_id}, ${stage}, ${round}, ${team1_id}, ${team2_id}, ${team1_score}, ${team2_score}, ${status}, ${match_date}, ${report}, ${raw_report}) RETURNING id
+      INSERT INTO matches (tournament_id, stage, group_name, round, team1_id, team2_id, team1_score, team2_score, status, match_date, report, raw_report) VALUES (${tournament_id}, ${stage}, ${group_name || null}, ${round}, ${team1_id}, ${team2_id}, ${team1_score}, ${team2_score}, ${status}, ${match_date}, ${report}, ${raw_report}) RETURNING id
     `;
     res.json({ id: result.rows[0].id });
   } catch (error: any) {
@@ -533,10 +571,10 @@ app.post('/api/matches', async (req, res) => {
 });
 
 app.put('/api/matches/:id', async (req, res) => {
-  const { stage, round, team1_id, team2_id, team1_score, team2_score, status, match_date, report, raw_report } = req.body;
+  const { stage, group_name, round, team1_id, team2_id, team1_score, team2_score, status, match_date, report, raw_report } = req.body;
   try {
     await sql`
-      UPDATE matches SET stage = ${stage}, round = ${round}, team1_id = ${team1_id}, team2_id = ${team2_id}, team1_score = ${team1_score}, team2_score = ${team2_score}, status = ${status}, match_date = ${match_date}, report = ${report}, raw_report = ${raw_report} WHERE id = ${req.params.id}
+      UPDATE matches SET stage = ${stage}, group_name = ${group_name || null}, round = ${round}, team1_id = ${team1_id}, team2_id = ${team2_id}, team1_score = ${team1_score}, team2_score = ${team2_score}, status = ${status}, match_date = ${match_date}, report = ${report}, raw_report = ${raw_report} WHERE id = ${req.params.id}
     `;
     res.json({ success: true });
   } catch (error: any) {
