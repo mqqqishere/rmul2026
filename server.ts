@@ -275,6 +275,9 @@ app.post('/api/ai/import-table', async (req, res) => {
     if (!tableData || typeof tableData !== 'string') {
       return res.status(400).json({ error: '请提供表格数据' });
     }
+    const { rows: existingTeams } = await sql`SELECT name FROM teams`;
+    const existingTeamNames = existingTeams.map((t: any) => t.name);
+
     const prompt = `请解析以下表格数据，识别战队名称、历史战绩和历史比赛信息，并以JSON格式返回（只返回JSON，不要有任何其他文字或代码块标记）。
 
 表格数据：
@@ -307,6 +310,8 @@ ${tableData}
 注意：
 - 每行数据对应一支战队
 - 第一列必须为战队名称
+- 比赛数据中第一列（team1_name）必须与以下“已有战队名”完全一致（区分大小写，不允许近似匹配）；不一致的比赛不要输出到matches中：
+${JSON.stringify(existingTeamNames)}
 - 如果比分格式为"2-1"，team1_score=2, team2_score=1
 - 如果没有明确的对战比赛数据，matches数组返回空数组[]
 - historical_records字段应整合该战队所有的历史信息（奖项、比分等）
@@ -328,12 +333,11 @@ ${tableData}
       matches: Array.isArray(parsed?.matches) ? parsed.matches : []
     };
 
-    const { rows: existingTeams } = await sql`SELECT name FROM teams`;
-    const existingTeamNames = new Set(existingTeams.map((t: any) => t.name));
+    const existingTeamNameSet = new Set(existingTeamNames);
     const skippedMatches: any[] = [];
     const filteredMatches = normalized.matches.filter((m: any) => {
-      const team1Name = (m?.team1_name || '').toString();
-      if (!team1Name || !existingTeamNames.has(team1Name)) {
+      const team1Name = (m?.team1_name || '').toString().trim();
+      if (!team1Name || !existingTeamNameSet.has(team1Name)) {
         skippedMatches.push(m);
         return false;
       }
@@ -536,8 +540,8 @@ app.post('/api/teams', async (req, res) => {
 
 app.put('/api/teams/:id', async (req, res) => {
   const { name, logo_url, region, description, reference_links, historical_records, points_ranking, is_top_tier } = req.body;
-  const nextTopTier = typeof is_top_tier === 'boolean' ? is_top_tier : null;
-  const nextPointsRanking = typeof points_ranking === 'string' ? points_ranking : null;
+  const validatedTopTier = typeof is_top_tier === 'boolean' ? is_top_tier : null;
+  const validatedPointsRanking = typeof points_ranking === 'string' ? points_ranking : null;
   try {
     await sql`
       UPDATE teams
@@ -547,8 +551,14 @@ app.put('/api/teams/:id', async (req, res) => {
           description = ${description},
           reference_links = ${reference_links},
           historical_records = ${historical_records},
-          points_ranking = COALESCE(${nextPointsRanking}, points_ranking),
-          is_top_tier = COALESCE(${nextTopTier}, is_top_tier)
+          points_ranking = CASE
+            WHEN ${validatedPointsRanking}::text IS NULL THEN points_ranking
+            ELSE ${validatedPointsRanking}
+          END,
+          is_top_tier = CASE
+            WHEN ${validatedTopTier}::boolean IS NULL THEN is_top_tier
+            ELSE ${validatedTopTier}
+          END
       WHERE id = ${req.params.id}
     `;
     res.json({ success: true });

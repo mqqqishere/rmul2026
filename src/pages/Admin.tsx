@@ -381,7 +381,7 @@ export default function Admin() {
         const m = importPreview.matches[idx];
         const team1Name = importMatchColumns.team1_name ? m.team1_name : '';
         const team2Name = importMatchColumns.team2_name ? m.team2_name : '';
-        if (!team1Name || !team2Name) { logs.push(`⚠️ 跳过比赛（未选择必要字段）：第 ${idx + 1} 行`); continue; }
+        if (!team1Name || !team2Name) { logs.push(`⚠️ 跳过比赛（队伍名称缺失）：第 ${idx + 1} 行`); continue; }
 
         const t1id = teamNameToId[team1Name];
         const t2id = teamNameToId[team2Name];

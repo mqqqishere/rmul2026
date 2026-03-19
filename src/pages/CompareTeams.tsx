@@ -54,9 +54,18 @@ export default function CompareTeams() {
       ]);
       const team1Data = team1Res.ok ? await team1Res.json() : teams.find(t => t.id.toString() === team1Id);
       const team2Data = team2Res.ok ? await team2Res.json() : teams.find(t => t.id.toString() === team2Id);
-      const currentTournamentMatches = currentTournamentId
-        ? await fetch(`/api/matches/compare/${team1Id}/${team2Id}/current/${currentTournamentId}`).then(res => res.ok ? res.json() : [])
-        : [];
+      let currentTournamentMatches: Match[] = [];
+      if (currentTournamentId) {
+        try {
+          const currentRes = await fetch(`/api/matches/compare/${team1Id}/${team2Id}/current/${currentTournamentId}`);
+          currentTournamentMatches = currentRes.ok ? await currentRes.json() : [];
+          if (!currentRes.ok) {
+            console.warn('Failed to load current tournament matches for prediction');
+          }
+        } catch (error) {
+          console.warn('Failed to load current tournament matches for prediction', error);
+        }
+      }
 
       const response = await fetch('/api/ai/predict', {
         method: 'POST',
