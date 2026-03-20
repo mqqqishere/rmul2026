@@ -53,7 +53,10 @@ export default function CompareTeams() {
     fetch(`/api/teams/${team1Id}`)
       .then(res => res.json())
       .then(data => setTeam1Matches(Array.isArray(data?.matches) ? data.matches : []))
-      .catch(() => setTeam1Matches([]));
+      .catch((error) => {
+        console.warn('Failed to load team A match history', error);
+        setTeam1Matches([]);
+      });
   }, [team1Id]);
 
   useEffect(() => {
@@ -64,7 +67,10 @@ export default function CompareTeams() {
     fetch(`/api/teams/${team2Id}`)
       .then(res => res.json())
       .then(data => setTeam2Matches(Array.isArray(data?.matches) ? data.matches : []))
-      .catch(() => setTeam2Matches([]));
+      .catch((error) => {
+        console.warn('Failed to load team B match history', error);
+        setTeam2Matches([]);
+      });
   }, [team2Id]);
 
   const handlePredict = async () => {
