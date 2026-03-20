@@ -10,6 +10,8 @@ export default function CompareTeams() {
   const [team1Id, setTeam1Id] = useState<string>('');
   const [team2Id, setTeam2Id] = useState<string>('');
   const [matches, setMatches] = useState<Match[]>([]);
+  const [team1Matches, setTeam1Matches] = useState<Match[]>([]);
+  const [team2Matches, setTeam2Matches] = useState<Match[]>([]);
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [currentTournamentId, setCurrentTournamentId] = useState<string>('');
   const [customPrompt, setCustomPrompt] = useState<string>('');
@@ -42,6 +44,34 @@ export default function CompareTeams() {
       setPrediction(null);
     }
   }, [team1Id, team2Id]);
+
+  useEffect(() => {
+    if (!team1Id) {
+      setTeam1Matches([]);
+      return;
+    }
+    fetch(`/api/teams/${team1Id}`)
+      .then(res => res.json())
+      .then(data => setTeam1Matches(Array.isArray(data?.matches) ? data.matches : []))
+      .catch((error) => {
+        console.warn('Failed to load team A match history', error);
+        setTeam1Matches([]);
+      });
+  }, [team1Id]);
+
+  useEffect(() => {
+    if (!team2Id) {
+      setTeam2Matches([]);
+      return;
+    }
+    fetch(`/api/teams/${team2Id}`)
+      .then(res => res.json())
+      .then(data => setTeam2Matches(Array.isArray(data?.matches) ? data.matches : []))
+      .catch((error) => {
+        console.warn('Failed to load team B match history', error);
+        setTeam2Matches([]);
+      });
+  }, [team2Id]);
 
   const handlePredict = async () => {
     if (!team1Id || !team2Id || team1Id === team2Id) return;
@@ -93,7 +123,9 @@ export default function CompareTeams() {
           },
           historicalMatches: matches,
           currentTournamentMatches,
-          customPrompt
+          customPrompt,
+          team1Matches,
+          team2Matches
         }),
       });
       
@@ -266,66 +298,108 @@ export default function CompareTeams() {
 
       {/* Match History List */}
       {team1 && team2 && (
-        <div className="space-y-6">
-          <h2 className="text-2xl font-bold text-white tracking-tight">对战记录</h2>
+        <div className="space-y-8">
+          <div className="space-y-6">
+            <h2 className="text-2xl font-bold text-white tracking-tight">直接交手记录</h2>
           
-          {loading ? (
-            <div className="text-center py-12 text-slate-400">加载记录中...</div>
-          ) : matches.length > 0 ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800/50">
-              {matches.map(match => {
-                return (
-                  <div 
-                    key={match.id} 
-                    className={`p-4 transition-colors flex flex-col sm:flex-row items-center justify-between gap-4 ${(match.report || match.raw_report) ? 'cursor-pointer hover:bg-slate-800/40' : 'hover:bg-slate-800/20'}`}
-                    onClick={() => {
-                      if (match.report || match.raw_report) {
-                        setSelectedMatch(match);
-                        setReportTab(match.report ? 'ai' : 'raw');
-                      }
-                    }}
-                  >
-                    <div className="flex flex-col w-full sm:w-1/4 text-sm">
-                      <Link to={`/tournaments/${match.tournament_id}`} className="text-emerald-400 hover:text-emerald-300 font-medium truncate" onClick={(e) => e.stopPropagation()}>
-                        {(match as any).tournament_name}
-                      </Link>
-                      <span className="text-slate-500 text-xs">{match.stage} - 第 {match.round} 轮</span>
-                    </div>
-
-                    <div className="flex items-center justify-center gap-4 w-full sm:w-2/4">
-                      <div className={`font-medium ${match.team1_id.toString() === team1Id ? 'text-emerald-400' : match.team1_id.toString() === team2Id ? 'text-blue-400' : 'text-slate-400'}`}>
-                        {match.team1_name}
-                      </div>
-                      
-                      <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
-                        <span className="font-mono text-white font-bold">{match.team1_score}</span>
-                        <span className="text-slate-600 text-xs">-</span>
-                        <span className="font-mono text-white font-bold">{match.team2_score}</span>
+            {loading ? (
+              <div className="text-center py-12 text-slate-400">加载记录中...</div>
+            ) : matches.length > 0 ? (
+              <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden divide-y divide-slate-800/50">
+                {matches.map(match => {
+                  return (
+                    <div 
+                      key={match.id} 
+                      className={`p-4 transition-colors flex flex-col sm:flex-row items-center justify-between gap-4 ${(match.report || match.raw_report) ? 'cursor-pointer hover:bg-slate-800/40' : 'hover:bg-slate-800/20'}`}
+                      onClick={() => {
+                        if (match.report || match.raw_report) {
+                          setSelectedMatch(match);
+                          setReportTab(match.report ? 'ai' : 'raw');
+                        }
+                      }}
+                    >
+                      <div className="flex flex-col w-full sm:w-1/4 text-sm">
+                        <Link to={`/tournaments/${match.tournament_id}`} className="text-emerald-400 hover:text-emerald-300 font-medium truncate" onClick={(e) => e.stopPropagation()}>
+                          {(match as any).tournament_name}
+                        </Link>
+                        <span className="text-slate-500 text-xs">{match.stage} - 第 {match.round} 轮</span>
                       </div>
 
-                      <div className={`font-medium ${match.team2_id.toString() === team1Id ? 'text-emerald-400' : match.team2_id.toString() === team2Id ? 'text-blue-400' : 'text-slate-400'}`}>
-                        {match.team2_name}
+                      <div className="flex items-center justify-center gap-4 w-full sm:w-2/4">
+                        <div className={`font-medium ${match.team1_id.toString() === team1Id ? 'text-emerald-400' : match.team1_id.toString() === team2Id ? 'text-blue-400' : 'text-slate-400'}`}>
+                          {match.team1_name}
+                        </div>
+                        
+                        <div className="flex items-center gap-2 bg-slate-950 px-3 py-1 rounded-lg border border-slate-800">
+                          <span className="font-mono text-white font-bold">{match.team1_score}</span>
+                          <span className="text-slate-600 text-xs">-</span>
+                          <span className="font-mono text-white font-bold">{match.team2_score}</span>
+                        </div>
+
+                        <div className={`font-medium ${match.team2_id.toString() === team1Id ? 'text-emerald-400' : match.team2_id.toString() === team2Id ? 'text-blue-400' : 'text-slate-400'}`}>
+                          {match.team2_name}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col items-end w-full sm:w-1/4 text-sm">
+                        <span className="font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+                          {match.status === 'Completed' ? '已结束' : match.status === 'Ongoing' ? '进行中' : '未开始'}
+                          {(match.report || match.raw_report) && <FileText className="w-4 h-4 text-emerald-400" />}
+                        </span>
+                        <span className="text-slate-500 text-xs">
+                          {match.match_date ? format(new Date(match.match_date), 'yyyy-MM-dd') : '待定'}
+                        </span>
                       </div>
                     </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-12 text-center text-slate-500 bg-slate-900 border border-slate-800 border-dashed rounded-xl">
+                这两支队伍暂无历史交锋记录。
+              </div>
+            )}
+          </div>
 
-                    <div className="flex flex-col items-end w-full sm:w-1/4 text-sm">
-                      <span className="font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                        {match.status === 'Completed' ? '已结束' : match.status === 'Ongoing' ? '进行中' : '未开始'}
-                        {(match.report || match.raw_report) && <FileText className="w-4 h-4 text-emerald-400" />}
-                      </span>
-                      <span className="text-slate-500 text-xs">
-                        {match.match_date ? format(new Date(match.match_date), 'yyyy-MM-dd') : '待定'}
-                      </span>
+          <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-800">
+                <h3 className="text-white font-semibold">{team1.name} 参赛记录</h3>
+              </div>
+              {team1Matches.length > 0 ? (
+                <div className="max-h-[420px] overflow-y-auto divide-y divide-slate-800/50">
+                  {team1Matches.map(match => (
+                    <div key={`team1-${match.id}`} className="p-4 text-sm space-y-1">
+                      <div className="text-slate-200 font-medium">{match.team1_name} {match.team1_score}-{match.team2_score} {match.team2_name}</div>
+                      <div className="text-slate-400">{(match as any).tournament_name} · {match.stage} 第{match.round}轮</div>
+                      <div className="text-slate-500">{match.match_date ? format(new Date(match.match_date), 'yyyy-MM-dd') : '待定'}</div>
                     </div>
-                  </div>
-                );
-              })}
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-slate-500 text-sm">暂无该队参赛记录。</div>
+              )}
             </div>
-          ) : (
-            <div className="p-12 text-center text-slate-500 bg-slate-900 border border-slate-800 border-dashed rounded-xl">
-              这两支队伍暂无历史交锋记录。
+
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 border-b border-slate-800">
+                <h3 className="text-white font-semibold">{team2.name} 参赛记录</h3>
+              </div>
+              {team2Matches.length > 0 ? (
+                <div className="max-h-[420px] overflow-y-auto divide-y divide-slate-800/50">
+                  {team2Matches.map(match => (
+                    <div key={`team2-${match.id}`} className="p-4 text-sm space-y-1">
+                      <div className="text-slate-200 font-medium">{match.team1_name} {match.team1_score}-{match.team2_score} {match.team2_name}</div>
+                      <div className="text-slate-400">{(match as any).tournament_name} · {match.stage} 第{match.round}轮</div>
+                      <div className="text-slate-500">{match.match_date ? format(new Date(match.match_date), 'yyyy-MM-dd') : '待定'}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-6 text-slate-500 text-sm">暂无该队参赛记录。</div>
+              )}
             </div>
-          )}
+          </div>
         </div>
       )}
 

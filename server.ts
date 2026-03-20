@@ -234,7 +234,7 @@ app.post('/api/ai/test', async (req, res) => {
 
 app.post('/api/ai/predict', async (req, res) => {
   try {
-    const { team1Name, team2Name, team1Details, team2Details, historicalMatches, currentTournamentMatches, customPrompt } = req.body;
+    const { team1Name, team2Name, team1Details, team2Details, historicalMatches, currentTournamentMatches, customPrompt, team1Matches, team2Matches } = req.body;
     const history = {
       team1: { name: team1Name, ...(team1Details || {}) },
       team2: { name: team2Name, ...(team2Details || {}) },
@@ -261,19 +261,44 @@ app.post('/api/ai/predict', async (req, res) => {
         status: m.status,
         ai_summary: m.report || null,
         raw_details: m.raw_report || null
+      })),
+      team1_recent_matches: (team1Matches || []).map((m: any) => ({
+        tournament: m.tournament_name,
+        stage: m.stage,
+        round: m.round,
+        date: m.match_date,
+        team1: m.team1_name,
+        score: `${m.team1_score}-${m.team2_score}`,
+        team2: m.team2_name,
+        status: m.status,
+        ai_summary: m.report || null,
+        raw_details: m.raw_report || null
+      })),
+      team2_recent_matches: (team2Matches || []).map((m: any) => ({
+        tournament: m.tournament_name,
+        stage: m.stage,
+        round: m.round,
+        date: m.match_date,
+        team1: m.team1_name,
+        score: `${m.team1_score}-${m.team2_score}`,
+        team2: m.team2_name,
+        status: m.status,
+        ai_summary: m.report || null,
+        raw_details: m.raw_report || null
       }))
     };
     const prompt = `请根据以下两支队伍（${team1Name} vs ${team2Name}）的数据生成中文赛前预测报告，并严格遵循：
 1) 优先参考“当前比赛过往比分数据”（current_tournament_matches）。
 2) 若当前比赛数据不足，再参考“历史数据”（historical_matches）。
-3) 输出结构包含：两队近期状态、交手记录、关键胜负手、结论。
-4) 将 is_top_tier 视为“强队”标签，结合 points_ranking（推荐格式“积分:X; 排名:Y”，也可能是纯排名或纯积分字符串）进行强弱判断。
-5) 当双方历史数据接近时，按以下优先级解析并比较 points_ranking：
+3) 结合两队“各自参赛记录”（team1_recent_matches / team2_recent_matches），通过共同或相近对手的间接对比分析双方强度。
+4) 输出结构包含：两队近期状态、交手记录、间接强度对比、关键胜负手、结论。
+5) 将 is_top_tier 视为“强队”标签，结合 points_ranking（推荐格式“积分:X; 排名:Y”，也可能是纯排名或纯积分字符串）进行强弱判断。
+6) 当双方历史数据接近时，按以下优先级解析并比较 points_ranking：
    - 若命中“排名:<数字>”，则按排名数字比较（越小通常越强）
    - 否则若命中“积分:<数字>”，则按积分数字比较（越大通常越强）
    - 若都无法提取有效数字，仅作弱参考，不要过度依赖
-6) 必须基于给定数据，不得虚构。
-${customPrompt ? `7) 额外用户提示词（需尽量遵循）：${customPrompt}` : ''}
+7) 必须基于给定数据，不得虚构。若缺少可比对手，请明确说明证据不足。
+${customPrompt ? `8) 额外用户提示词（需尽量遵循）：${customPrompt}` : ''}
 
 数据：
 ${JSON.stringify(history)}`;
